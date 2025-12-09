@@ -65,3 +65,16 @@ This is the exact process to build the "Sanitize-then-Translate" architecture.
 #### Step 1.1: Instrument OLLVM (C++)
 
 We modify the OLLVM source code to tag "junk" blocks with a special LLVM metadata flag.
+
+#### Step 1.2: Generate the Dataset
+
+Compile 100,000 C functions (from AnghaBench or GNU Coreutils) using this custom OLLVM.
+
+**Command:** `clang -O2 -mllvm -bcf -c sample.c -o sample.o`
+
+**Result:** A binary where every "trash" instruction technically has a marker (or you extract the mapping during compilation to a JSON file).
+
+### Phase 2: Feature Extraction (Solving "Garbage In")
+**Problem:** Junk bytes crash standard disassemblers. 
+
+**Solution:** Use a Headless Ghidra Script to parse the binary, extract the Control Flow Graph (CFG), and label nodes based on your OLLVM logs.
