@@ -78,3 +78,8 @@ Compile 100,000 C functions (from AnghaBench or GNU Coreutils) using this custom
 **Problem:** Junk bytes crash standard disassemblers. 
 
 **Solution:** Use a Headless Ghidra Script to parse the binary, extract the Control Flow Graph (CFG), and label nodes based on your OLLVM logs.
+
+### Phase 3: The Neural Sanitizer (Solving "Graph Explosion")
+**Problem:** Obfuscated graphs are messy. 
+
+**Solution:** A Gated Graph Neural Network (GGNN). It looks at the topology (shapes) of the graph to find the "fake" loops created by OLLVM.
