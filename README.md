@@ -91,3 +91,43 @@ Compile 100,000 C functions (from AnghaBench or GNU Coreutils) using this custom
 
 - **SK2Decompile Approach:** Split generation into "Skeleton" (Logic) and "Skin" (Names).
 - **Context:** Use a model with 16k+ context window (CodeLlama-Instruct).
+
+### Phase 5: Verification (Solving "Does it work?")
+**Problem:** The code looks right but crashes or deviates in behavior.
+
+**Solution:** Reinforcement Learning (RL) with compiler and execution feedback. Create a loop where the model generates decompiled code, you attempt to compile and run it, and reward the model based on compilation success and behavioral equivalence.
+
+**Algorithm (Conceptual):**
+
+- **Generate:** Model produces `decompile.c`.
+- **Compile:** Run `gcc -c decompile.c`.
+- **Fail:** Reward = `-1.0`.
+- **Pass (compiles):** Reward = `+0.5`.
+- **Fuzz:** Execute the original binary and the decompiled binary on the same inputs.
+- **Output Match:** Reward = `+10.0`.
+- **Update:** Use PPO (Proximal Policy Optimization) to adjust model weights from the collected rewards.
+
+**Notes:**
+
+- Use isolated sandboxes and time limits when running generated executables.
+- Start with small unit tests and then scale to fuzzing for behavioral equivalence.
+
+## Pillar 3: Recent Research (2024-2025) to Read
+You must reference these to ensure your method is state-of-the-art.
+
+- **"Nova: Generative Language Models for Binaries" (ICLR 2025)**
+  - Why: Introduces Hierarchical Attention to handle the massive length of assembly code. Essential for Phase 4.
+- **"SK2Decompile: Decompiling from Skeleton to Skin" (2025)**n  - Why: Proves that separating logic recovery from variable naming reduces hallucinations.
+- **"DisasLLM: AI-driven Disassembly" (2024)**
+  - Why: Solves the "Junk Byte" problem by using a small model to filter bytes before Ghidra sees them.
+- **"Codealign: Instruction-Level Equivalence" (2025)**
+  - Why: Solves the "Ground Truth" problem by aligning instructions based on execution traces rather than static position.
+
+## Final Execution Checklist
+
+- **Setup:** Install `Ghidra`, `PyTorch Geometric`, and `HuggingFace transformers`.
+- **Data:** Spend 3 weeks generating the OLLVM/Tigress dataset — if the dataset is poor, the project will fail.
+- **Sanitizer:** Train the GNN to >90% accuracy on trash detection before proceeding to decompilation.
+- **Decompiler:** Fine-tune CodeLlama (or a similarly capable model) on the sanitized outputs.
+- **RL:** Implement the compilation + fuzzing reward loop to fix syntax issues and improve behavioral equivalence.
+
