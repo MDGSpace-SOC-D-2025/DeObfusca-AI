@@ -83,3 +83,11 @@ Compile 100,000 C functions (from AnghaBench or GNU Coreutils) using this custom
 **Problem:** Obfuscated graphs are messy. 
 
 **Solution:** A Gated Graph Neural Network (GGNN). It looks at the topology (shapes) of the graph to find the "fake" loops created by OLLVM.
+
+### Phase 4: The Neural Decompiler (Solving "Hallucination")
+**Problem:** LLMs guess variable names wrong and lose track of long context. 
+
+**Solution:**
+
+- **SK2Decompile Approach:** Split generation into "Skeleton" (Logic) and "Skin" (Names).
+- **Context:** Use a model with 16k+ context window (CodeLlama-Instruct).
