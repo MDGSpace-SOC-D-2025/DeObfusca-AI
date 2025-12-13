@@ -1,133 +1,127 @@
-This roadmap is divided into three pillars:
+# DeObfusca-AI
 
-The Curriculum: Concepts and resources.
+Binary deobfuscation using neural networks and symbolic execution. Attempts to reverse engineer obfuscated binaries back to readable C code.
 
-The Engineering Pipeline: Step-by-step implementation with code.
+## What is this?
 
-The Research Front: Key papers to replicate.
+A platform that tries to automatically deobfuscate binaries using a combination of:
+- Code Property Graphs to understand binary structure
+- Neural networks (GNN + LLM) for code generation
+- Z3 theorem prover to verify correctness
+- Reinforcement learning to improve results
 
-## Pillar 1: The Curriculum (What to Learn)
-Before writing code, you need to master the intersection of Compiler Theory, Binary Analysis, and Deep Learning.
+It's research-level work, so expect things to break sometimes.
 
-### Module A: Binary Analysis & Ghidra Internals
+## Prerequisites
 
-**Concept:** Intermediate Representations (IR). You cannot train models on raw assembly (too noisy). You must learn P-Code (Ghidra's RTL) or LLVM IR.
+- Docker & Docker Compose
+- Node.js 18+ (if running frontend locally)
+- Python 3.11+ (for running AI services locally)
+- At least 50GB free disk space for training data
 
-**Concept:** Headless Analysis. Analyzing 100k binaries requires automation, not a GUI.
+## Setup
 
-**Resources:**
+```bash
+git clone <repo>
+cd DeObfusca-AI
+docker-compose up --build
+```
 
-- Book: "The Ghidra Book" (specifically chapters on scripting and P-Code).
-- Docs: Ghidra API: ghidra.program.model.pcode.
-- Action: Write a script to print the P-Code of main.
+Then open http://localhost:3000 in your browser.
 
-### Module B: Adversarial Compilation (The Enemy)
+If Docker Compose fails, check that:
+- Docker daemon is running
+- You have 8GB+ RAM available
+- Port 3000 and 8000 aren't already in use
 
-**Concept:** Pass Management. How compilers transform code in stages. Obfuscation is just a malicious pass.
+## Project Structure
 
-**Concept:** Control Flow Flattening (CFF) & Opaque Predicates. Understand mathematically how these destroy graph structures.
+```
+frontend/              - React UI
+backend-node/          - Node.js backend API
+ai-services/           - Python microservices
+  - ghidra-service/    - Binary analysis
+  - cpg-service/       - Property graph construction
+  - gnn-service/       - Graph neural network
+  - llm-service/       - Large language model
+  - rl-service/        - Verification + Z3 solver
+  - orchestrator/       - Coordinates everything
+```
 
-**Resources:**
+## How it works
 
-- Source Code: Read BogusControlFlow.cpp in the Obfuscator-LLVM (OLLVM) repository.
-- Paper: "Surreptitious Software" by Christian Collberg (The bible of obfuscation).
+1. Upload a binary
+2. Ghidra analyzes it and produces assembly + control flow graph
+3. CPG service builds a code property graph
+4. GNN processes the graph and produces embeddings
+5. LLM generates C code based on embeddings
+6. RL service verifies the code is correct using Z3
+7. If verification fails, diffusion/multi-agent services try to refine the code
+8. Repeat up to 3 times
 
-### Module C: Graph Neural Networks (The Sanitizer)
+## Documentation
 
-**Concept:** Message Passing. How a node (instruction) learns from its neighbors (control flow).
+- `TRAINING_GUIDE.md` - How to train the models
+- `PROBLEMS_AND_SOLUTIONS.md` - Known issues and what we did about them
+- `QUICK_START.md` - Command reference
 
-**Concept:** Gated Graph Neural Networks (GGNN). Best for sequential data flow on graphs.
+## Current Status
 
-**Resources:**
+Working features:
+- Binary upload and analysis
+- Ghidra integration
+- Property graph generation
+- Code generation
+- Basic verification
 
-- Library: PyTorch Geometric (PyG).
-- Tutorial: "Graph Neural Networks for Source Code" (Microsoft Research).
+Known issues:
+- LLM sometimes hallucinates invalid C syntax (though grammar decoder helps)
+- GNN embeddings could be better with more training data
+- Z3 verification is slow for large functions
+- Multi-agent refinement needs tuning
 
-### Module D: Large Language Models (The Translator)
+## Training
 
-**Concept:** Instruction Tuning vs. Pre-training. You are fine-tuning, not pre-training.
+To train the AI models:
 
-**Concept:** Hierarchical Attention. How to handle 10,000 assembly tokens without running out of memory (Nova architecture).
+```bash
+python3 train_all_models.py --download-data
+python3 train_all_models.py --train-all --parallel
+```
 
-**Resources:**
+This will take 8-12 hours depending on your hardware. See `TRAINING_GUIDE.md` for details.
 
-- Library: HuggingFace TRL (Transformer Reinforcement Learning).
-- Technique: QLoRA (Quantized Low-Rank Adaptation).
+## Development
 
-## Pillar 2: The Implementation Pipeline (The Build)
-This is the exact process to build the "Sanitize-then-Translate" architecture.
+If you want to modify the AI services:
 
-### Phase 1: The Data Foundry (Solving "Ground Truth")
-**Problem:** How do we know which instruction is "trash" in a compiled binary? 
+```bash
+cd ai-services/gnn-service
+python3 app.py
+```
 
-**Solution:** Modify the Obfuscator to leave "breadcrumbs" (metadata) that Ghidra can read, but the CPU ignores.
+Then in another terminal, test it:
 
-#### Step 1.1: Instrument OLLVM (C++)
+```bash
+curl -X POST http://localhost:5002/sanitize \
+  -H "Content-Type: application/json" \
+  -d '{"features": [[1.0, 2.0, 3.0]]}'
+```
 
-We modify the OLLVM source code to tag "junk" blocks with a special LLVM metadata flag.
+## License
 
-#### Step 1.2: Generate the Dataset
+MIT
 
-Compile 100,000 C functions (from AnghaBench or GNU Coreutils) using this custom OLLVM.
+## Notes
 
-**Command:** `clang -O2 -mllvm -bcf -c sample.c -o sample.o`
+This project was built as part of SOC-D-2025. It's research code, not production-ready. Use at your own risk.
 
-**Result:** A binary where every "trash" instruction technically has a marker (or you extract the mapping during compilation to a JSON file).
+If something breaks, check the Docker logs:
+```bash
+docker-compose logs -f
+```
 
-### Phase 2: Feature Extraction (Solving "Garbage In")
-**Problem:** Junk bytes crash standard disassemblers. 
-
-**Solution:** Use a Headless Ghidra Script to parse the binary, extract the Control Flow Graph (CFG), and label nodes based on your OLLVM logs.
-
-### Phase 3: The Neural Sanitizer (Solving "Graph Explosion")
-**Problem:** Obfuscated graphs are messy. 
-
-**Solution:** A Gated Graph Neural Network (GGNN). It looks at the topology (shapes) of the graph to find the "fake" loops created by OLLVM.
-
-### Phase 4: The Neural Decompiler (Solving "Hallucination")
-**Problem:** LLMs guess variable names wrong and lose track of long context. 
-
-**Solution:**
-
-- **SK2Decompile Approach:** Split generation into "Skeleton" (Logic) and "Skin" (Names).
-- **Context:** Use a model with 16k+ context window (CodeLlama-Instruct).
-
-### Phase 5: Verification (Solving "Does it work?")
-**Problem:** The code looks right but crashes or deviates in behavior.
-
-**Solution:** Reinforcement Learning (RL) with compiler and execution feedback. Create a loop where the model generates decompiled code, you attempt to compile and run it, and reward the model based on compilation success and behavioral equivalence.
-
-**Algorithm (Conceptual):**
-
-- **Generate:** Model produces `decompile.c`.
-- **Compile:** Run `gcc -c decompile.c`.
-- **Fail:** Reward = `-1.0`.
-- **Pass (compiles):** Reward = `+0.5`.
-- **Fuzz:** Execute the original binary and the decompiled binary on the same inputs.
-- **Output Match:** Reward = `+10.0`.
-- **Update:** Use PPO (Proximal Policy Optimization) to adjust model weights from the collected rewards.
-
-**Notes:**
-
-- Use isolated sandboxes and time limits when running generated executables.
-- Start with small unit tests and then scale to fuzzing for behavioral equivalence.
-
-## Pillar 3: Recent Research (2024-2025) to Read
-You must reference these to ensure your method is state-of-the-art.
-
-- **"Nova: Generative Language Models for Binaries" (ICLR 2025)**
-  - Why: Introduces Hierarchical Attention to handle the massive length of assembly code. Essential for Phase 4.
-- **"SK2Decompile: Decompiling from Skeleton to Skin" (2025)**n  - Why: Proves that separating logic recovery from variable naming reduces hallucinations.
-- **"DisasLLM: AI-driven Disassembly" (2024)**
-  - Why: Solves the "Junk Byte" problem by using a small model to filter bytes before Ghidra sees them.
-- **"Codealign: Instruction-Level Equivalence" (2025)**
-  - Why: Solves the "Ground Truth" problem by aligning instructions based on execution traces rather than static position.
-
-## Final Execution Checklist
-
-- **Setup:** Install `Ghidra`, `PyTorch Geometric`, and `HuggingFace transformers`.
-- **Data:** Spend 3 weeks generating the OLLVM/Tigress dataset — if the dataset is poor, the project will fail.
-- **Sanitizer:** Train the GNN to >90% accuracy on trash detection before proceeding to decompilation.
-- **Decompiler:** Fine-tune CodeLlama (or a similarly capable model) on the sanitized outputs.
-- **RL:** Implement the compilation + fuzzing reward loop to fix syntax issues and improve behavioral equivalence.
-
+Or check individual service logs:
+```bash
+docker logs deobfusca-ai-gnn-service-1
+```

@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users collection - users can only read/write their own document
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Projects collection - users can only access their own projects
+    match /projects/{projectId} {
+      allow read, write: if request.auth != null && 
+                           resource.data.user_id == request.auth.uid;
+      allow create: if request.auth != null && 
+                      request.resource.data.user_id == request.auth.uid;
+    }
+    
+    // Jobs collection - users can only access their own jobs
+    match /jobs/{jobId} {
+      allow read, write: if request.auth != null && 
+                           resource.data.user_id == request.auth.uid;
+      allow create: if request.auth != null && 
+                      request.resource.data.user_id == request.auth.uid;
+    }
+  }
+}

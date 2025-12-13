@@ -1,0 +1,182 @@
+{
+  "training_config": {
+    "version": "1.0",
+    "description": "Automated training configuration for DeObfusca-AI models",
+    
+    "data_sources": {
+      "gnn": {
+        "name": "GNN Sanitizer Training Data",
+        "description": "OLLVM obfuscated binaries with junk instruction labels",
+        "size": 10000,
+        "sources": [
+          "OLLVM obfuscated binary repository",
+          "Synthetic OLLVM-like binaries",
+          "Real-world obfuscated executables"
+        ],
+        "format": "JSON (P-Code, CFG, Labels)",
+        "download_time_minutes": 30
+      },
+      "llm": {
+        "name": "LLM Decompilation Pairs",
+        "description": "Binary code to C source code pairs for fine-tuning",
+        "size": 5000,
+        "sources": [
+          "AnghaBench dataset",
+          "Exampler dataset",
+          "Custom decompiled binaries"
+        ],
+        "format": "JSON (Assembly, Source Code)",
+        "download_time_minutes": 45
+      },
+      "rl": {
+        "name": "RL Training Trajectories",
+        "description": "PPO training trajectories with rewards",
+        "size": 1000,
+        "sources": [
+          "Synthetic trajectories",
+          "Real decompilation attempts with rewards"
+        ],
+        "format": "JSON (States, Actions, Rewards)",
+        "download_time_minutes": 10
+      },
+      "diffusion": {
+        "name": "Code Transformation Pairs",
+        "description": "Noisy code to clean code pairs for diffusion training",
+        "size": 5000,
+        "sources": [
+          "Code obfuscation transformations",
+          "Compiler optimizations",
+          "Manual code transformations"
+        ],
+        "format": "JSON (Noisy, Clean Code)",
+        "download_time_minutes": 20
+      }
+    },
+    
+    "models": {
+      "gnn": {
+        "name": "Edge-Augmented Graph Transformer",
+        "type": "Graph Neural Network",
+        "framework": "PyTorch Geometric",
+        "input": "P-Code Graph",
+        "output": "Junk Instruction Classification",
+        "hyperparameters": {
+          "hidden_dim": 128,
+          "num_layers": 6,
+          "num_heads": 8,
+          "dropout": 0.1,
+          "learning_rate": 0.001,
+          "batch_size": 32,
+          "epochs": 20
+        },
+        "expected_training_time_minutes": 30,
+        "expected_accuracy": 0.92
+      },
+      "llm": {
+        "name": "CodeLlama-7B with QLoRA",
+        "type": "Language Model Fine-tuning",
+        "framework": "Transformers + PEFT",
+        "input": "Binary P-Code",
+        "output": "C Source Code",
+        "hyperparameters": {
+          "model": "codellama/CodeLlama-7b-hf",
+          "quantization": "4-bit (NF4)",
+          "lora_rank": 16,
+          "lora_alpha": 32,
+          "learning_rate": 0.0002,
+          "batch_size": 4,
+          "gradient_accumulation_steps": 8,
+          "epochs": 3
+        },
+        "expected_training_time_minutes": 120,
+        "expected_perplexity": 25.0,
+        "gpu_memory_gb": 16,
+        "cpu_fallback": true
+      },
+      "rl": {
+        "name": "PPO Decompilation Agent",
+        "type": "Reinforcement Learning",
+        "framework": "PyTorch",
+        "input": "Sanitized Features",
+        "output": "Decompilation Strategy",
+        "hyperparameters": {
+          "learning_rate": 0.0003,
+          "gamma": 0.99,
+          "gae_lambda": 0.95,
+          "eps_clip": 0.2,
+          "epochs": 10,
+          "batch_size": 64,
+          "timesteps": 2048
+        },
+        "expected_training_time_minutes": 45,
+        "expected_reward": 12.5
+      },
+      "diffusion": {
+        "name": "Diffusion Code Generator",
+        "type": "Denoising Diffusion Probabilistic Model",
+        "framework": "PyTorch",
+        "input": "Noisy Code Tokens + Binary Features",
+        "output": "Clean Code",
+        "hyperparameters": {
+          "vocab_size": 50000,
+          "d_model": 768,
+          "num_timesteps": 1000,
+          "num_blocks": 12,
+          "num_heads": 8,
+          "learning_rate": 0.0001,
+          "batch_size": 16,
+          "epochs": 10
+        },
+        "expected_training_time_minutes": 60,
+        "expected_bleu_score": 0.75
+      }
+    },
+    
+    "training_strategy": {
+      "phase1_data_collection": {
+        "duration_minutes": 105,
+        "tasks": [
+          "Download/generate GNN dataset",
+          "Download/generate LLM decompilation pairs",
+          "Generate RL trajectories",
+          "Generate diffusion code pairs"
+        ]
+      },
+      "phase2_parallel_training": {
+        "parallel_workers": 2,
+        "duration_minutes": 120,
+        "order": [
+          "GNN (30 min) - lightweight, can run first",
+          "RL (45 min) - medium weight",
+          "LLM (120 min) - heavyweight, parallel with RL/Diffusion",
+          "Diffusion (60 min) - heavyweight, parallel with LLM"
+        ],
+        "note": "With 2 workers: Max time is max(30, 120) = 120 minutes for all"
+      },
+      "phase3_validation": {
+        "duration_minutes": 15,
+        "tasks": [
+          "Evaluate models on validation set",
+          "Generate performance metrics",
+          "Save checkpoints"
+        ]
+      },
+      "total_estimated_duration_minutes": 240
+    },
+    
+    "checkpointing": {
+      "save_interval_minutes": 10,
+      "keep_best_n": 3,
+      "backup_location": "/data/training/backups",
+      "checkpoint_format": "PyTorch .pth files"
+    },
+    
+    "system_requirements": {
+      "ram_gb": 32,
+      "disk_space_gb": 200,
+      "cpu_cores": 8,
+      "gpu_optional": true,
+      "gpu_memory_gb": 16
+    }
+  }
+}

@@ -1,0 +1,238 @@
+version: '3.8'
+services:
+  backend:
+    build: ./backend-node
+    container_name: deobfusca-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend-node:/app
+      - ./data:/data
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=8000
+      - FIRESTORE_EMULATOR_HOST=firebase-emulator:8080
+      - FIREBASE_AUTH_EMULATOR_HOST=firebase-emulator:9099
+      - ORCHESTRATOR_URL=http://orchestrator:5000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - firebase-emulator
+      - redis
+      - orchestrator
+    networks:
+      - deobfusca-network
+  
+  frontend:
+    build: ./frontend
+    container_name: deobfusca-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/usr/src/app
+      - /usr/src/app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_FIREBASE_API_KEY=demo-api-key
+      - VITE_FIREBASE_AUTH_DOMAIN=demo-project.firebaseapp.com
+      - VITE_FIREBASE_PROJECT_ID=demo-project
+      - VITE_FIREBASE_STORAGE_BUCKET=demo-project.appspot.com
+      - VITE_FIREBASE_MESSAGING_SENDER_ID=123456789
+      - VITE_FIREBASE_APP_ID=1:123456789:web:abcdef
+    networks:
+      - deobfusca-network
+  
+  firebase-emulator:
+    image: andreysenov/firebase-tools:latest
+    container_name: deobfusca-firebase
+    ports:
+      - "4000:4000"  # Emulator UI
+      - "8080:8080"  # Firestore
+      - "9099:9099"  # Auth
+    volumes:
+      - ./firebase:/firebase
+    working_dir: /firebase
+    command: firebase emulators:start --project demo-project
+    environment:
+      - FIRESTORE_EMULATOR_HOST=0.0.0.0:8080
+      - FIREBASE_AUTH_EMULATOR_HOST=0.0.0.0:9099
+    networks:
+      - deobfusca-network
+  
+  # AI Services - Advanced Verify-Refine Architecture
+  ghidra-service:
+    build: ./ai-services/ghidra-service
+    container_name: deobfusca-ghidra
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./ai-services/ghidra-service:/app
+      - ./data:/data
+    networks:
+      - deobfusca-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  cpg-service:
+    build: ./ai-services/cpg-service
+    container_name: deobfusca-cpg
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./ai-services/cpg-service:/app
+    networks:
+      - deobfusca-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  gnn-service:
+    build: ./ai-services/gnn-service
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./ai-services/gnn-service:/app
+    networks:
+      - deobfusca-network
+    depends_on:
+      - cpg-service
+    # GPU not available on macOS - deploy section commented
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+  
+  # LLM service - can run on CPU with quantization (slower)
+  llm-service:
+    build: ./ai-services/llm-service
+    container_name: deobfusca-llm
+    ports:
+      - "5003:5003"
+    volumes:
+      - ./ai-services/llm-service:/app
+      - ./data:/data
+    networks:
+      - deobfusca-network
+    environment:
+      - FLASK_ENV=production
+    # Optional: GPU acceleration (if available)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+  
+  rl-service:
+    build: ./ai-services/rl-service
+    ports:
+      - "5004:5004"
+    volumes:
+      - ./ai-services/rl-service:/app
+      - ./data:/data
+    networks:
+      - deobfusca-network
+  
+  # New Advanced AI Services
+  diffusion-service:
+    build: ./ai-services/diffusion-service
+    container_name: deobfusca-diffusion
+    ports:
+      - "5006:5006"
+    volumes:
+      - ./ai-services/diffusion-service:/app
+    networks:
+      - deobfusca-network
+    environment:
+      - FLASK_ENV=production
+  
+  multi-agent-service:
+    build: ./ai-services/multi-agent-service
+    container_name: deobfusca-multi-agent
+    ports:
+      - "5007:5007"
+    volumes:
+      - ./ai-services/multi-agent-service:/app
+    networks:
+      - deobfusca-network
+    environment:
+      - FLASK_ENV=production
+  
+  cot-service:
+    build: ./ai-services/cot-service
+    container_name: deobfusca-cot
+    ports:
+      - "5008:5008"
+    volumes:
+      - ./ai-services/cot-service:/app
+    networks:
+      - deobfusca-network
+    environment:
+      - FLASK_ENV=production
+  
+  orchestrator:
+    build: ./ai-services/orchestrator
+    container_name: deobfusca-orchestrator
+    ports:
+      - "5010:5000"
+    volumes:
+      - ./ai-services/orchestrator:/app
+      - ./data:/data
+    networks:
+      - deobfusca-network
+    depends_on:
+      - ghidra-service
+      - cpg-service
+      - gnn-service
+      - llm-service
+      - rl-service
+      - diffusion-service
+      - multi-agent-service
+      - cot-service
+    environment:
+      - FLASK_ENV=production
+      - GHIDRA_SERVICE_URL=http://ghidra-service:5001
+      - CPG_SERVICE_URL=http://cpg-service:5005
+      - GNN_SERVICE_URL=http://gnn-service:5002
+      - LLM_SERVICE_URL=http://llm-service:5003
+      - RL_SERVICE_URL=http://rl-service:5004
+      - DIFFUSION_SERVICE_URL=http://diffusion-service:5006
+      - MULTI_AGENT_SERVICE_URL=http://multi-agent-service:5007
+      - COT_SERVICE_URL=http://cot-service:5008
+      - MAX_REFINEMENT_ITERATIONS=3
+      - REWARD_THRESHOLD=10.5
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: deobfusca-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - deobfusca-network
+    volumes:
+      - redis-data:/data
+
+networks:
+  deobfusca-network:
+    driver: bridge
+
+volumes:
+  redis-data:
