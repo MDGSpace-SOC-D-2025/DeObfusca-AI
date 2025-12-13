@@ -89,7 +89,7 @@ python3 train_all_models.py --download-data
 python3 train_all_models.py --train-all --parallel
 ```
 
-This will take 8-12 hours depending on your hardware. See `TRAINING_GUIDE.md` for details.
+This will take 8-12 hours depending on hardware. See `TRAINING_GUIDE.md` for details.
 
 ## Development
 
@@ -112,9 +112,7 @@ curl -X POST http://localhost:5002/sanitize \
 
 MIT
 
-## Notes
-
-This project was built as part of SOC-D-2025. It's research code, not production-ready. Use at your own risk.
+## Note
 
 If something breaks, check the Docker logs:
 ```bash
