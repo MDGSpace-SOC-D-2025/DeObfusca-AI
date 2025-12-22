@@ -291,10 +291,118 @@ def refine():
         return jsonify({'error': str(e)}), 500
 
 
+def code_to_tokens(code: str) -> List[int]:
+    """Convert C code to token IDs for diffusion processing."""
+    # Reverse mapping: string -> token ID
+    string_to_token = {
+        ' ': 0, '{': 1, '}': 2, '(': 3, ')': 4, ';': 5, ',': 6,
+        'int': 7, 'void': 8, 'char': 9, 'return': 10, 'if': 11,
+        'else': 12, 'for': 13, 'while': 14, '=': 15, '+': 16,
+        '-': 17, '*': 18, '/': 19, '<': 20, '>': 21, '==': 22,
+        '!=': 23, '&&': 24, '||': 25, 'break': 26, 'continue': 27
+    }
+    
+    tokens = []
+    i = 0
+    code = code.strip()
+    
+    while i < len(code):
+        # Try multi-char operators first
+        matched = False
+        for length in [2, 1]:  # Check 2-char then 1-char
+            if i + length <= len(code):
+                substr = code[i:i+length]
+                if substr in string_to_token:
+                    tokens.append(string_to_token[substr])
+                    i += length
+                    matched = True
+                    break
+        
+        if matched:
+            continue
+        
+        # Check for keywords (word boundaries)
+        for keyword in ['continue', 'return', 'while', 'break', 'else', 'void', 'char', 'for', 'int', 'if']:
+            if code[i:].startswith(keyword) and (i + len(keyword) >= len(code) or not code[i + len(keyword)].isalnum()):
+                tokens.append(string_to_token[keyword])
+                i += len(keyword)
+                matched = True
+                break
+        
+        if matched:
+            continue
+        
+        # Check for identifiers (variables)
+        if code[i].isalpha() or code[i] == '_':
+            j = i
+            while j < len(code) and (code[j].isalnum() or code[j] == '_'):
+                j += 1
+            identifier = code[i:j]
+            # Hash to token range 28-99 for variables
+            var_id = 28 + (hash(identifier) % 72)
+            tokens.append(var_id)
+            i = j
+            continue
+        
+        # Check for numbers
+        if code[i].isdigit():
+            j = i
+            while j < len(code) and code[j].isdigit():
+                j += 1
+            num = int(code[i:j])
+            # Map to constant range 100-199
+            tokens.append(100 + min(num, 99))
+            i = j
+            continue
+        
+        # Skip whitespace
+        if code[i].isspace():
+            tokens.append(0)
+            i += 1
+            continue
+        
+        # Unknown character - skip
+        i += 1
+    
+    return tokens
+
+
 def tokens_to_code(tokens):
-    """Convert token IDs to C code (placeholder)."""
-    # In production, use proper tokenizer
-    return "// Generated via Diffusion Model\nint decompiled_function() {\n    // Code here\n    return 0;\n}"
+    """Convert token IDs to C code with basic detokenization."""
+    # Simple token-to-string mapping for C keywords and common patterns
+    token_map = {
+        0: ' ', 1: '{', 2: '}', 3: '(', 4: ')', 5: ';', 6: ',',
+        7: 'int', 8: 'void', 9: 'char', 10: 'return', 11: 'if',
+        12: 'else', 13: 'for', 14: 'while', 15: '=', 16: '+',
+        17: '-', 18: '*', 19: '/', 20: '<', 21: '>', 22: '==',
+        23: '!=', 24: '&&', 25: '||', 26: 'break', 27: 'continue'
+    }
+    
+    # Convert token IDs to strings
+    code_parts = []
+    for token_id in tokens:
+        if isinstance(token_id, torch.Tensor):
+            token_id = token_id.item()
+        
+        if token_id in token_map:
+            code_parts.append(token_map[token_id])
+        elif token_id < 100:  # Variable names
+            code_parts.append(f'var_{token_id}')
+        elif token_id < 200:  # Constants
+            code_parts.append(str(token_id - 100))
+        else:
+            code_parts.append('_')
+    
+    # Basic formatting
+    code = ' '.join(code_parts)
+    code = code.replace(' ;', ';').replace(' ,', ',').replace('( ', '(').replace(' )', ')')
+    code = code.replace(' {', ' {\n    ').replace('} ', '}\n')
+    
+    # Ensure it's valid C structure
+    if 'int' not in code and 'void' not in code:
+        code = f"// Generated via Diffusion Model\nint decompiled_function() {{\n    {code}\n    return 0;\n}}"
+    
+    return code
 
 
 if __name__ == '__main__':

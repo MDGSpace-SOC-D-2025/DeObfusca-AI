@@ -27,14 +27,6 @@ DeObfusca-AI is a full-stack AI-powered binary deobfuscation system with:
                      └──────────────┘      └─────────────────┘
 ```
 
-## Prerequisites
-
-- **Docker & Docker Compose**: Latest version
-- **Node.js 18+**: For local development
-- **Python 3.11+**: For AI services
-- **NVIDIA GPU** (optional): For LLM/GNN acceleration
-- **20GB+ Disk Space**: For models and dependencies
-
 ## Quick Start
 
 ### 1. Clone and Setup
@@ -417,16 +409,6 @@ docker-compose logs firebase-emulator
 open http://localhost:4000
 ```
 
-### GPU Not Detected
-
-```bash
-# Verify NVIDIA runtime
-docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
-
-# Check Docker GPU support
-docker info | grep -i runtime
-```
-
 ### Model Loading Errors
 
 ```bash
@@ -439,9 +421,6 @@ huggingface-cli download codellama/CodeLlama-7b-hf
 ls -la ai-services/gnn-service/models/
 ```
 
-## API Reference
-
-See `docs/API_REFERENCE.md` for complete endpoint documentation.
 
 ## Training Datasets
 
@@ -483,32 +462,7 @@ gcc -S program.c        # Generate assembly
 # Pair with original C source
 ```
 
-## Performance Metrics
-
-### Expected Throughput
-
-- **Ghidra Analysis**: 10-30s per binary
-- **GNN Sanitization**: 0.5-2s per function
-- **LLM Decompilation**: 5-15s per function (GPU)
-- **RL Verification**: 2-10s per program
-- **End-to-End**: 30-60s per binary
-
-### Accuracy Targets
-
-- **GNN Junk Detection**: >90% precision/recall
-- **Decompilation Quality**: 70-85% code similarity
-- **RL Verification**: 80%+ compilation success
-
-## Contributing
-
-See `CONTRIBUTING.md` for guidelines.
-
 ## License
 
 MIT License - See `LICENSE` file.
 
-## Support
-
-- GitHub Issues: Report bugs and request features
-- Documentation: See `docs/` directory
-- Email: support@deobfusca-ai.com

@@ -23,13 +23,13 @@ DeObfusca-AI is a **state-of-the-art binary deobfuscation system** combining 9 s
 **There are TWO backend directories:**
 
 ### 1. `backend/` - **Legacy Python/FastAPI Backend (NOT IN USE)**
-- **Status**: ❌ Deprecated
+- **Status**:  Deprecated
 - **Language**: Python with FastAPI
 - **Purpose**: Original implementation, no longer maintained
 - **Note**: Do NOT use this. It's kept for reference only.
 
 ### 2. `backend-node/` - **Active Node.js/Express Backend (PRODUCTION)**
-- **Status**: ✅ Active & Production-Ready
+- **Status**: Active & Production-Ready
 - **Language**: Node.js with Express
 - **Port**: 8000
 - **Purpose**: Main API server for the application
@@ -239,37 +239,7 @@ deobfusca-network (bridge)
 - Host machine accesses services via `localhost:PORT`
 - Example: Browser accesses `http://localhost:3000`
 
-## Key Improvements Made
 
-### 1. **Backend Consolidation** ✅
-- Switched docker-compose from `backend/` (Python) to `backend-node/` (Node.js)
-- Added proper environment variables
-- Configured service dependencies
-
-### 2. **API Configuration** ✅
-- Created centralized `frontend/src/config/api.js`
-- All API calls now use `VITE_API_URL` environment variable
-- Helper functions for authenticated requests and file uploads
-
-### 3. **Docker Improvements** ✅
-- Added container names for all services
-- Added healthchecks for critical services
-- Proper volume mounts (excluding node_modules)
-- Unified network for all services
-- Added orchestrator environment variables
-
-### 4. **Configuration Files** ✅
-- Created `.env.example` for backend-node
-- Created `.env.example` for frontend
-- Clear separation of dev/prod configs
-
-### 5. **Documentation** ✅
-- This architecture document
-- Updated README with backend clarification
-- Service port reference table
-- Data flow diagrams
-
-## Getting Started
 
 ### Quick Start (Development)
 
@@ -383,6 +353,3 @@ curl http://localhost:5000/health
 - [ ] Configure firewall rules
 - [ ] Regular security audits
 
----
-
-**Last Updated**: December 9, 2025

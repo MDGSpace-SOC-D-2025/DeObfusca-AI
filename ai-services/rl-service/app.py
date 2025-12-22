@@ -5,7 +5,14 @@ import os
 import difflib
 from pathlib import Path
 import z3
+import numpy as np
 from typing import List, Dict, Tuple
+try:
+    from pycparser import c_parser, c_ast, parse_file
+    PYCPARSER_AVAILABLE = True
+except ImportError:
+    PYCPARSER_AVAILABLE = False
+    print("Warning: pycparser not available, using pattern-based parsing")
 
 app = Flask(__name__)
 
@@ -23,6 +30,7 @@ class NeuralSymbolicVerifier:
     def symbolic_execute(self, source_code: str, inputs: List[int]) -> Dict:
         """
         Symbolically execute C code and extract constraints.
+        Uses pycparser for full AST parsing when available.
         
         Args:
             source_code: C code to analyze
@@ -37,18 +45,160 @@ class NeuralSymbolicVerifier:
             symbolic_vars[f'input_{i}'] = z3.Int(f'input_{i}')
             self.solver.add(symbolic_vars[f'input_{i}'] == val)
         
-        # TODO: Parse C code into Z3 constraints
-        # This is a placeholder - full implementation would require:
-        # 1. Parse C AST
-        # 2. Convert operations to Z3 formulas
-        # 3. Track variable assignments
-        # 4. Build constraint system
+        # Use full AST parser if available
+        if PYCPARSER_AVAILABLE:
+            return self._symbolic_execute_ast(source_code, symbolic_vars)
+        else:
+            return self._symbolic_execute_pattern(source_code, symbolic_vars)
+    
+    def _symbolic_execute_ast(self, source_code: str, symbolic_vars: Dict) -> Dict:
+        """Full AST-based symbolic execution using pycparser."""
+        try:
+            # Parse C code to AST
+            parser = c_parser.CParser()
+            
+            # Wrap in minimal C structure if needed
+            if 'int main' not in source_code and 'void ' not in source_code:
+                wrapped_code = f"int main() {{ {source_code} return 0; }}"
+            else:
+                wrapped_code = source_code
+            
+            ast = parser.parse(wrapped_code)
+            
+            # Walk AST and build constraints
+            local_vars = {}
+            self._visit_ast_node(ast, local_vars, symbolic_vars)
+            
+            return {
+                'constraints': str(self.solver),
+                'satisfiable': self.solver.check() == z3.sat,
+                'model': str(self.solver.model()) if self.solver.check() == z3.sat else None,
+                'variables': list(local_vars.keys()),
+                'method': 'ast'
+            }
+        except Exception as e:
+            # Fallback to pattern matching
+            print(f"AST parsing failed: {e}, using pattern-based fallback")
+            return self._symbolic_execute_pattern(source_code, symbolic_vars)
+    
+    def _visit_ast_node(self, node, local_vars: Dict, symbolic_vars: Dict):
+        """Recursively visit AST nodes and build Z3 constraints."""
+        if isinstance(node, c_ast.Decl):
+            # Variable declaration
+            var_name = node.name
+            local_vars[var_name] = z3.Int(var_name)
+            
+            if node.init:
+                if isinstance(node.init, c_ast.Constant):
+                    value = int(node.init.value)
+                    self.solver.add(local_vars[var_name] == value)
         
-        # For now, return basic structure
+        elif isinstance(node, c_ast.Assignment):
+            # Assignment operation
+            if isinstance(node.lvalue, c_ast.ID):
+                lhs = node.lvalue.name
+                if lhs in local_vars:
+                    rhs_expr = self._ast_to_z3(node.rvalue, local_vars, symbolic_vars)
+                    if rhs_expr is not None:
+                        self.solver.add(local_vars[lhs] == rhs_expr)
+        
+        elif isinstance(node, c_ast.If):
+            # Conditional statement
+            cond_expr = self._ast_to_z3(node.cond, local_vars, symbolic_vars)
+            if cond_expr is not None:
+                self.solver.add(cond_expr)
+        
+        # Recursively visit children
+        for child in node:
+            self._visit_ast_node(child, local_vars, symbolic_vars)
+    
+    def _ast_to_z3(self, node, local_vars: Dict, symbolic_vars: Dict):
+        """Convert AST expression to Z3 expression."""
+        if isinstance(node, c_ast.ID):
+            name = node.name
+            if name in local_vars:
+                return local_vars[name]
+            elif name in symbolic_vars:
+                return symbolic_vars[name]
+        
+        elif isinstance(node, c_ast.Constant):
+            return int(node.value)
+        
+        elif isinstance(node, c_ast.BinaryOp):
+            left = self._ast_to_z3(node.left, local_vars, symbolic_vars)
+            right = self._ast_to_z3(node.right, local_vars, symbolic_vars)
+            
+            if left is None or right is None:
+                return None
+            
+            if node.op == '+':
+                return left + right
+            elif node.op == '-':
+                return left - right
+            elif node.op == '*':
+                return left * right
+            elif node.op == '/':
+                return left / right
+            elif node.op == '<':
+                return left < right
+            elif node.op == '>':
+                return left > right
+            elif node.op == '==':
+                return left == right
+            elif node.op == '!=':
+                return left != right
+        
+        return None
+    
+    def _symbolic_execute_pattern(self, source_code: str, symbolic_vars: Dict) -> Dict:
+        """Pattern-based symbolic execution (fallback method)."""
+        # Extract variable declarations and operations
+        lines = source_code.strip().split('\n')
+        local_vars = {}
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Handle variable declarations: int x = 5;
+            if 'int ' in line and '=' in line:
+                parts = line.split('=')
+                var_name = parts[0].replace('int', '').strip().rstrip(';')
+                try:
+                    value = int(parts[1].strip().rstrip(';'))
+                    local_vars[var_name] = z3.Int(var_name)
+                    self.solver.add(local_vars[var_name] == value)
+                except:
+                    local_vars[var_name] = z3.Int(var_name)
+            
+            # Handle arithmetic operations: x = y + z;
+            elif '=' in line and '+' in line:
+                parts = line.split('=')
+                lhs = parts[0].strip()
+                rhs = parts[1].strip().rstrip(';')
+                if lhs in local_vars:
+                    # Parse RHS
+                    operands = rhs.split('+')
+                    if len(operands) == 2:
+                        op1 = operands[0].strip()
+                        op2 = operands[1].strip()
+                        if op1 in local_vars and op2 in local_vars:
+                            self.solver.add(local_vars[lhs] == local_vars[op1] + local_vars[op2])
+            
+            # Handle comparisons: if (x > 10)
+            elif 'if' in line and '>' in line:
+                condition = line[line.find('(')+1:line.find(')')]
+                parts = condition.split('>')
+                if len(parts) == 2:
+                    var = parts[0].strip()
+                    val = int(parts[1].strip())
+                    if var in local_vars:
+                        self.solver.add(local_vars[var] > val)
+        
         return {
             'constraints': str(self.solver),
             'satisfiable': self.solver.check() == z3.sat,
-            'model': self.solver.model() if self.solver.check() == z3.sat else None
+            'model': str(self.solver.model()) if self.solver.check() == z3.sat else None,
+            'variables': list(local_vars.keys())
         }
     
     def prove_equivalence(
@@ -116,6 +266,179 @@ class NeuralSymbolicVerifier:
 
 # Global verifier instance
 symbolic_verifier = NeuralSymbolicVerifier()
+
+
+class ConfidenceCalibrator:
+    """
+    Calibrates confidence scores for better reward scaling.
+    
+    Techniques:
+    1. Temperature scaling
+    2. Platt scaling
+    3. Isotonic regression
+    4. Histogram binning
+    """
+    
+    def __init__(self, method='temperature'):
+        self.method = method
+        self.temperature = 1.5  # Default temperature
+        self.calibration_data = []
+        self.bins = 10
+    
+    def calibrate_reward(self, raw_reward: float, confidence: float) -> float:
+        """
+        Calibrate reward based on confidence and historical performance.
+        
+        Args:
+            raw_reward: Uncalibrated reward (0-11 scale)
+            confidence: Model confidence (0-1)
+        
+        Returns:
+            Calibrated reward with proper scaling
+        """
+        if self.method == 'temperature':
+            return self._temperature_scaling(raw_reward, confidence)
+        elif self.method == 'platt':
+            return self._platt_scaling(raw_reward, confidence)
+        elif self.method == 'histogram':
+            return self._histogram_binning(raw_reward, confidence)
+        else:
+            return raw_reward
+    
+    def _temperature_scaling(self, reward: float, confidence: float) -> float:
+        """
+        Apply temperature scaling to smooth reward distribution.
+        
+        Higher temperature: More conservative (compress high rewards)
+        Lower temperature: More aggressive (amplify high rewards)
+        """
+        # Apply temperature to confidence
+        scaled_confidence = confidence ** (1.0 / self.temperature)
+        
+        # Adjust reward based on scaled confidence
+        calibrated_reward = reward * scaled_confidence
+        
+        # Apply sigmoid to bound output
+        calibrated_reward = 11.0 / (1.0 + np.exp(-0.5 * (calibrated_reward - 5.5)))
+        
+        return calibrated_reward
+    
+    def _platt_scaling(self, reward: float, confidence: float) -> float:
+        """
+        Platt scaling using logistic regression.
+        
+        Maps raw scores to calibrated probabilities.
+        """
+        # Learned parameters (would be fitted on validation set)
+        A = 1.2
+        B = -0.5
+        
+        # Logistic function
+        calibrated = 11.0 / (1.0 + np.exp(A * reward + B))
+        
+        # Weight by confidence
+        calibrated = calibrated * confidence + reward * (1 - confidence)
+        
+        return np.clip(calibrated, 0.0, 11.0)
+    
+    def _histogram_binning(self, reward: float, confidence: float) -> float:
+        """
+        Histogram binning for calibration.
+        
+        Divides reward range into bins and adjusts based on empirical accuracy.
+        """
+        bin_size = 11.0 / self.bins
+        bin_idx = int(reward / bin_size)
+        bin_idx = min(bin_idx, self.bins - 1)
+        
+        # Empirical bin accuracies (would be computed from validation data)
+        bin_accuracies = np.array([0.3, 0.4, 0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9])
+        
+        # Adjust reward based on bin accuracy
+        bin_accuracy = bin_accuracies[bin_idx]
+        calibrated = reward * (bin_accuracy / confidence) if confidence > 0 else reward
+        
+        return np.clip(calibrated, 0.0, 11.0)
+    
+    def update_calibration(self, predicted_confidence: float, actual_success: bool):
+        """
+        Update calibration data with new observation.
+        
+        Args:
+            predicted_confidence: Model's predicted confidence
+            actual_success: Whether verification actually succeeded
+        """
+        self.calibration_data.append({
+            'confidence': predicted_confidence,
+            'success': actual_success
+        })
+        
+        # Recompute temperature if enough data
+        if len(self.calibration_data) >= 100:
+            self._recompute_temperature()
+    
+    def _recompute_temperature(self):
+        """Recompute optimal temperature using validation data."""
+        confidences = [d['confidence'] for d in self.calibration_data]
+        successes = [d['success'] for d in self.calibration_data]
+        
+        # Find temperature that minimizes calibration error
+        best_temp = 1.0
+        best_error = float('inf')
+        
+        for temp in np.linspace(0.5, 3.0, 50):
+            scaled_confs = [c ** (1.0 / temp) for c in confidences]
+            
+            # Compute calibration error (ECE - Expected Calibration Error)
+            error = 0
+            for i in range(self.bins):
+                bin_confs = [c for c, s in zip(scaled_confs, successes) if i/self.bins <= c < (i+1)/self.bins]
+                if bin_confs:
+                    bin_successes = [s for c, s in zip(scaled_confs, successes) if i/self.bins <= c < (i+1)/self.bins]
+                    avg_conf = np.mean(bin_confs)
+                    avg_acc = np.mean(bin_successes)
+                    error += abs(avg_conf - avg_acc) * len(bin_confs)
+            
+            error /= len(confidences)
+            
+            if error < best_error:
+                best_error = error
+                best_temp = temp
+        
+        self.temperature = best_temp
+        print(f"Updated temperature to {self.temperature:.3f} (calibration error: {best_error:.4f})")
+    
+    def get_calibration_stats(self) -> Dict:
+        """Get calibration statistics."""
+        if not self.calibration_data:
+            return {'error': 'No calibration data'}
+        
+        confidences = [d['confidence'] for d in self.calibration_data]
+        successes = [d['success'] for d in self.calibration_data]
+        
+        # Compute ECE
+        ece = 0
+        for i in range(self.bins):
+            bin_mask = [(i/self.bins <= c < (i+1)/self.bins) for c in confidences]
+            bin_confs = [c for c, m in zip(confidences, bin_mask) if m]
+            bin_succs = [s for s, m in zip(successes, bin_mask) if m]
+            
+            if bin_confs:
+                avg_conf = np.mean(bin_confs)
+                avg_acc = np.mean(bin_succs)
+                ece += abs(avg_conf - avg_acc) * len(bin_confs) / len(confidences)
+        
+        return {
+            'expected_calibration_error': ece,
+            'temperature': self.temperature,
+            'num_samples': len(self.calibration_data),
+            'avg_confidence': np.mean(confidences),
+            'avg_success_rate': np.mean(successes)
+        }
+
+
+# Global calibrator
+confidence_calibrator = ConfidenceCalibrator(method='temperature')
 
 
 @app.route('/health', methods=['GET'])
@@ -212,18 +535,29 @@ def verify():
             decompiled_outputs=decompiled_outputs
         )
         
-        # Step 5: Calculate reward
-        reward = calculate_reward(
+        # Step 5: Calculate raw reward
+        raw_reward = calculate_reward(
             compilation_success=True,
             execution_match=execution_match,
             symbolic_equivalent=symbolic_equivalent
         )
         
+        # Step 6: Apply confidence calibration
+        confidence = 0.8 if execution_match else 0.5
+        calibrated_reward = confidence_calibrator.calibrate_reward(raw_reward, confidence)
+        
+        # Step 7: Update calibration data
+        verification_success = execution_match and symbolic_equivalent
+        confidence_calibrator.update_calibration(confidence, verification_success)
+        
         return jsonify({
             'compilation_success': True,
             'execution_match': execution_match,
             'symbolic_equivalent': symbolic_equivalent,
-            'reward': reward,
+            'reward': calibrated_reward,
+            'raw_reward': raw_reward,
+            'confidence': confidence,
+            'calibration_method': confidence_calibrator.method,
             'errors': [],
             'feedback': feedback,
             'symbolic_details': symbolic_result
