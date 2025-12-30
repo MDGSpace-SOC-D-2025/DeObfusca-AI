@@ -103,7 +103,6 @@ class CGrammarConstrainedLogitsProcessor(LogitsProcessor):
 app = Flask(__name__)
 
 class LLMDecompiler:
-    # ...existing code...
     def __init__(self, model_name='codellama/CodeLlama-7b-hf', adapter_path=None):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
@@ -133,8 +132,6 @@ class LLMDecompiler:
         self.model.eval()
     
     def decompile(self, sanitized_features, max_length=2048, use_grammar_constraints=True):
-        # ...existing code...
-        # Handle large functions with sliding window
         if len(sanitized_features) > 2048:
             return self._decompile_sliding_window(sanitized_features, max_length, use_grammar_constraints)
         
@@ -185,7 +182,6 @@ Generate clean, readable C code: [/INST]
         return c_code
     
     def _decompile_sliding_window(self, sanitized_features, max_length=2048, use_grammar_constraints=True):
-        # ...existing code...
         window_size = 1800  # Leave room for prompt
         overlap = 360  # 20% overlap
         chunks = []
@@ -257,7 +253,6 @@ Generate clean, readable C code: [/INST]
         return merged_code
     
     def _merge_chunks(self, chunks):
-        # ...existing code...
         if len(chunks) == 1:
             return chunks[0]
         
@@ -290,7 +285,6 @@ Generate clean, readable C code: [/INST]
         return merged
     
     def _format_pcode(self, features):
-        # ...existing code...
         lines = []
         for i, op in enumerate(features):
             mnemonic = op.get('mnemonic', 'UNKNOWN')
@@ -323,7 +317,6 @@ def health():
 
 @app.route('/decompile', methods=['POST'])
 def decompile():
-    # ...existing code...
     try:
         data = request.json
         features = data.get('sanitized_features', [])
@@ -338,8 +331,7 @@ def decompile():
         source_code = decompiler.decompile(features)
         
         return jsonify({
-            'code': source_code,       # Primary field for new architecture
-            'source': source_code,     # Legacy compatibility
+            'source': source_code,
             'success': True,
             'input_length': len(features)
         })
@@ -349,7 +341,6 @@ def decompile():
 
 @app.route('/decompile-binary', methods=['POST'])
 def decompile_binary():
-    # ...existing code...
     try:
         data = request.json
         functions = data.get('functions', [])
@@ -393,101 +384,18 @@ def decompile_binary():
 
 @app.route('/refine', methods=['POST'])
 def refine():
-    # ...existing code...
     try:
         data = request.json
-        current_code = data.get('current_code', '')
         features = data.get('sanitized_features', [])
-        feedback = data.get('feedback', '')
         
         if not decompiler:
             return jsonify({'error': 'Decompiler not initialized'}), 503
         
-        # Format P-Code
-        pcode_str = decompiler._format_pcode(features) if features else "No P-Code provided"
-        
-        # Build refinement prompt
-        if current_code and feedback:
-            # Full refinement with feedback
-            prompt = f"""<s>[INST] You are refining a decompiled C function based on verification feedback.
-
-Current decompiled code:
-```c
-{current_code}
-```
-
-Verification feedback:
-{feedback}
-
-Original binary P-Code:
-{pcode_str}
-
-Improve the code to address the feedback while preserving correct behavior. Generate improved C code: [/INST]
-"""
-        elif current_code:
-            # Refinement without specific feedback - general improvements
-            prompt = f"""<s>[INST] Improve the following decompiled C code for better readability and correctness.
-
-Current code:
-```c
-{current_code}
-```
-
-Original binary P-Code:
-{pcode_str}
-
-Generate improved, cleaner C code: [/INST]
-"""
-        else:
-            # Fresh decompilation
-            refined_code = decompiler.decompile(features, max_length=2048)
-            return jsonify({'code': refined_code, 'refined_code': refined_code, 'success': True})
-        
-        # Tokenize
-        inputs = decompiler.tokenizer(prompt, return_tensors="pt").to(decompiler.device)
-        
-        # Setup grammar constraints
-        logits_processor = LogitsProcessorList([
-            CGrammarConstrainedLogitsProcessor(decompiler.tokenizer)
-        ])
-        
-        # Generate refined code
-        with torch.no_grad():
-            outputs = decompiler.model.generate(
-                **inputs,
-                max_length=2048,
-                temperature=0.3,  # Slightly higher for refinement creativity
-                top_p=0.9,
-                do_sample=True,
-                num_return_sequences=1,
-                pad_token_id=decompiler.tokenizer.eos_token_id,
-                logits_processor=logits_processor
-            )
-        
-        generated_text = decompiler.tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        # Extract C code
-        if '[/INST]' in generated_text:
-            refined_code = generated_text.split('[/INST]')[1].strip()
-        else:
-            refined_code = generated_text
-        
-        # Clean up code markers if present
-        if '```c' in refined_code:
-            refined_code = refined_code.split('```c')[1].split('```')[0].strip()
-        elif '```' in refined_code:
-            refined_code = refined_code.split('```')[1].split('```')[0].strip()
-        
-        return jsonify({
-            'code': refined_code,
-            'refined_code': refined_code,
-            'success': True,
-            'used_feedback': bool(feedback)
-        })
+        refined_code = decompiler.decompile(features, max_length=2048)
+        return jsonify({'refined_source': refined_code, 'success': True})
         
     except Exception as e:
-        import traceback
-        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     load_decompiler()

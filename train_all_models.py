@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""
-Automated Training Orchestrator for DeObfusca-AI
-
-This script automates:
-1. Data collection from multiple sources
-2. Dataset preparation and splitting
-3. Parallel training of all AI models
-4. Model validation and metrics collection
-5. Model checkpointing and versioning
-
-Supported Models:
-- GNN Sanitizer: Junk instruction detection
-- LLM Decompiler: CodeLlama fine-tuning with QLoRA
-- RL Agent: PPO for decompilation strategy
-- Diffusion Model: Code generation refinement
-"""
 
 import os
 import sys
@@ -29,7 +13,7 @@ from typing import Dict, List, Tuple
 import subprocess
 import shutil
 
-# Configure logging
+ 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -70,14 +54,11 @@ CONFIG = {
 }
 
 class DataCollector:
-    """Collects training data from various sources."""
-    
     def __init__(self, data_root: str):
         self.data_root = data_root
         self.created_dirs = []
         
     def create_directories(self):
-        """Create necessary directories for training."""
         dirs_to_create = [
             self.data_root,
             f'{self.data_root}/gnn_dataset',
@@ -87,22 +68,12 @@ class DataCollector:
             f'{self.data_root}/checkpoints',
             f'{self.data_root}/results'
         ]
-        
         for dir_path in dirs_to_create:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
             self.created_dirs.append(dir_path)
             logger.info(f"Created directory: {dir_path}")
     
     def download_datasets(self) -> Dict[str, bool]:
-        """
-        Download datasets from public sources.
-        
-        Datasets:
-        1. OLLVM Obfuscated Binaries - for GNN training
-        2. AnghaBench + Exampler - for LLM decompilation pairs
-        3. Synthetic RL trajectories - for PPO training
-        4. Code transformation pairs - for diffusion training
-        """
         results = {}
         
         logger.info("=" * 60)
@@ -164,7 +135,6 @@ class DataCollector:
         return results
     
     def _generate_ollvm_dataset(self, output_path: str, size: int):
-        """Generate synthetic OLLVM-like dataset for GNN training."""
         os.makedirs(output_path, exist_ok=True)
         
         samples = []
@@ -201,7 +171,6 @@ class DataCollector:
             json.dump(metadata, f, indent=2)
     
     def _generate_decompilation_pairs(self, output_path: str, size: int):
-        """Generate synthetic binary-source pairs for LLM training."""
         os.makedirs(output_path, exist_ok=True)
         
         samples = []
@@ -244,7 +213,6 @@ int func_{i}(int x) {{
             json.dump(metadata, f, indent=2)
     
     def _generate_rl_trajectories(self, output_path: str, size: int):
-        """Generate synthetic RL training trajectories."""
         os.makedirs(output_path, exist_ok=True)
         
         samples = []
@@ -271,7 +239,6 @@ int func_{i}(int x) {{
             json.dump(metadata, f, indent=2)
     
     def _generate_code_pairs(self, output_path: str, size: int):
-        """Generate synthetic code transformation pairs for diffusion."""
         os.makedirs(output_path, exist_ok=True)
         
         samples = []
@@ -300,7 +267,6 @@ int func_{i}(int x) {{
             json.dump(metadata, f, indent=2)
 
 class ModelTrainer:
-    """Trains individual AI models."""
     
     def __init__(self, model_name: str, script_path: str, data_path: str):
         self.model_name = model_name
@@ -311,7 +277,6 @@ class ModelTrainer:
         self.result = None
     
     def train(self) -> Dict:
-        """Execute training for a specific model."""
         logger.info(f"\n{'='*60}")
         logger.info(f"TRAINING: {self.model_name.upper()}")
         logger.info(f"{'='*60}")
@@ -365,14 +330,12 @@ class ModelTrainer:
             return self.result
     
     def _mock_train(self):
-        """Run mock training for demonstration."""
         logger.info(f"Running mock training simulation for {self.model_name}...")
         # Simulate training time
         time.sleep(2)
         logger.info(f"Mock training completed for {self.model_name}")
     
     def _generate_result(self, success: bool = True, error: str = None) -> Dict:
-        """Generate training result summary."""
         return {
             'model': self.model_name,
             'success': success,
@@ -388,7 +351,6 @@ class ModelTrainer:
         }
 
 class TrainingOrchestrator:
-    """Orchestrates the entire training pipeline."""
     
     def __init__(self, config: Dict, max_workers: int = 2):
         self.config = config
@@ -399,7 +361,6 @@ class TrainingOrchestrator:
         self.end_time = None
     
     def run(self):
-        """Execute the complete training pipeline."""
         print("\n" + "="*70)
         print("DeObfusca-AI - AUTOMATED MODEL TRAINING ORCHESTRATOR")
         print("="*70)
@@ -429,7 +390,6 @@ class TrainingOrchestrator:
         self._print_summary()
     
     def _train_models_parallel(self) -> Dict:
-        """Train all models in parallel using ProcessPoolExecutor."""
         training_tasks = []
         results = {}
         
@@ -481,7 +441,6 @@ class TrainingOrchestrator:
         return results
     
     def _print_summary(self):
-        """Print training summary."""
         logger.info("\n" + "="*70)
         logger.info("TRAINING COMPLETE - SUMMARY REPORT")
         logger.info("="*70)
@@ -523,7 +482,6 @@ class TrainingOrchestrator:
         logger.info("="*70)
 
 def main():
-    """Main entry point."""
     parser = argparse.ArgumentParser(
         description='Automated training orchestrator for DeObfusca-AI models'
     )

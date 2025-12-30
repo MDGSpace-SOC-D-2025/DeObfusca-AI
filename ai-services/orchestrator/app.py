@@ -31,9 +31,6 @@ MULTI_AGENT_TIMEOUT = 120
 COT_TIMEOUT = 60
 
 def safe_request(url, method='POST', json_data=None, timeout=30, service_name=''):
-    """
-    Safe request wrapper with error handling and fallbacks.
-    """
     try:
         if method == 'POST':
             response = requests.post(url, json=json_data, timeout=timeout)
@@ -53,7 +50,6 @@ def safe_request(url, method='POST', json_data=None, timeout=30, service_name=''
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Check health of all services in advanced architecture."""
     statuses = {}
     all_healthy = True
     
@@ -93,12 +89,6 @@ def health():
 
 @app.route('/sanitize', methods=['POST'])
 def sanitize():
-    """
-    Advanced Verify-Refine Loop Pipeline with comprehensive error handling.
-    Binary → Ghidra → CPG → Graph Transformer → Hierarchical LLM → Symbolic Verifier
-    
-    With iterative refinement based on verification feedback.
-    """
     try:
         data = request.json
         file_path = data.get('file_path')
@@ -189,267 +179,231 @@ def sanitize():
                 print(f"GNN error: {e}")
                 sanitized_functions.append({'name': func['name'], 'sanitized_features': func.get('pcode', [])})
         
-        # STEP 4 & 5: Verify-Refine Loop
-        print("Step 4: Hierarchical LLM Decompilation with Verify-Refine Loop...")
+        # STEP 4 & 5: Parallel Candidate Generation + Collaborative Refinement Loop
+        # NEW ARCHITECTURE: All 3 generators (LLM, Diffusion, Multi-Agent) produce candidates,
+        # RL verifier scores them, and ALL generators refine the BEST candidate together.
+        print("Step 4: Parallel Candidate Generation (LLM + Diffusion + Multi-Agent)...")
         refinement_history = []
         best_decompilation = None
         best_reward = -float('inf')
+        current_best_code = {}  # Track best code per function for collaborative refinement
         
         for iteration in range(max_iterations):
-            print(f"  Iteration {iteration + 1}/{max_iterations}")
+            print(f"\n{'='*60}")
+            print(f"  ITERATION {iteration + 1}/{max_iterations}")
+            print(f"{'='*60}")
             
-            # Decompile entire binary
-            try:
-                llm_resp, llm_err = safe_request(
-                    f'{LLM_URL}/decompile-binary',
-                    json_data={'functions': sanitized_functions},
-                    timeout=LLM_TIMEOUT,
-                    service_name='LLM'
-                )
-                
-                if llm_err:
-                    print(f"LLM error: {llm_err}")
-                    if iteration == 0:
-                        return jsonify({'error': f'LLM decompilation failed: {llm_err}'}), 503
-                    break
-                
-                if llm_resp.status_code != 200:
-                    print(f"LLM returned {llm_resp.status_code}")
-                    break
-                
-                decompiled = llm_resp.json().get('decompiled', {})
-            except Exception as e:
-                print(f"LLM step error: {e}")
-                if iteration == 0:
-                    return jsonify({'error': f'LLM decompilation error: {str(e)}'}), 500
-                break
+            # ─────────────────────────────────────────────────────────────
+            # PHASE A: Generate candidates from ALL three services in parallel
+            # ─────────────────────────────────────────────────────────────
+            print("  Phase A: Generating candidates from LLM, Diffusion, Multi-Agent...")
             
-            # STEP 5: Neural-Symbolic Verification with Z3
-            print(f"  Step 5: Verifying with symbolic execution...")
-            verification_results = {}
-            total_reward = 0
+            candidates = {}  # {func_name: [{source: 'llm'|'diffusion'|'multi-agent', code: str, reward: float}]}
             
-            for func_name, source_code in decompiled.items():
+            for func in sanitized_functions:
+                func_name = func['name']
+                candidates[func_name] = []
+                features = func.get('sanitized_features', [])
+                cpg = cpg_analysis.get(func_name, {})
+                
+                # Base code for refinement iterations (empty on first, best on subsequent)
+                base_code = current_best_code.get(func_name, '')
+                
+                # ── Candidate 1: LLM ──
                 try:
-                    verify_resp, verify_err = safe_request(
-                        f'{RL_URL}/verify',
-                        json_data={'source_code': source_code, 'original_binary_path': file_path, 'use_symbolic': True},
-                        timeout=RL_TIMEOUT,
-                        service_name='RL'
-                    )
-                    
-                    if verify_err:
-                        print(f"RL warning: {verify_err}")
-                        verification_results[func_name] = {'reward': 0.0, 'error': verify_err}
-                    elif verify_resp.status_code == 200:
-                        verification = verify_resp.json()
-                        verification_results[func_name] = verification
-                        total_reward += verification.get('reward', 0)
+                    if iteration == 0 or not base_code:
+                        # First iteration: fresh generation
+                        llm_resp, llm_err = safe_request(
+                            f'{LLM_URL}/decompile',
+                            json_data={'sanitized_features': features},
+                            timeout=LLM_TIMEOUT,
+                            service_name='LLM'
+                        )
                     else:
-                        verification_results[func_name] = {'reward': 0.0, 'error': f'RL returned {verify_resp.status_code}'}
+                        # Subsequent iterations: refine best code
+                        llm_resp, llm_err = safe_request(
+                            f'{LLM_URL}/refine',
+                            json_data={
+                                'current_code': base_code,
+                                'sanitized_features': features,
+                                'feedback': func.get('refinement_feedback', '')
+                            },
+                            timeout=LLM_TIMEOUT,
+                            service_name='LLM'
+                        )
+                    
+                    if not llm_err and llm_resp and llm_resp.status_code == 200:
+                        llm_code = llm_resp.json().get('code', llm_resp.json().get('refined_code', ''))
+                        if llm_code:
+                            candidates[func_name].append({'source': 'llm', 'code': llm_code, 'reward': 0.0})
+                            print(f"    [+] LLM candidate for {func_name}")
+                    else:
+                        print(f"    [-] LLM failed for {func_name}: {llm_err}")
                 except Exception as e:
-                    print(f"RL error: {e}")
-                    verification_results[func_name] = {'reward': 0.0, 'error': str(e)}
-            
-            # Record this iteration
-            refinement_history.append({
-                'iteration': iteration + 1,
-                'reward': total_reward,
-                'decompilation': decompiled,
-                'verification': verification_results
-            })
-            
-            # Check if this is best so far
-            if total_reward > best_reward:
-                best_reward = total_reward
-                best_decompilation = decompiled
-            
-            # Check if we've reached acceptable quality
-            if total_reward >= REWARD_THRESHOLD or not enable_refinement:
-                print(f"  ✓ Acceptable quality reached (reward: {total_reward})")
-                break
-            
-            # STEP 6: Generate feedback for refinement
-            print(f"  Generating feedback for refinement (reward: {total_reward})...")
-            feedback_prompts = []
-            for func_name, verification in verification_results.items():
-                if verification.get('feedback'):
-                    feedback_prompts.append({'function': func_name, 'feedback': verification['feedback']})
-            
-            # Select refinement strategy based on iteration
-            if feedback_prompts and iteration < max_iterations - 1:
-                refinement_method = ['diffusion', 'multi-agent', 'cot'][iteration % 3]
-                print(f"  Applying {refinement_method} refinement...")
+                    print(f"    [-] LLM error for {func_name}: {e}")
                 
-                for sf in sanitized_functions:
-                    for fp in feedback_prompts:
-                        if sf['name'] == fp['function']:
-                            sf['refinement_feedback'] = fp['feedback']
-                            
-                            # Call appropriate refinement service
-                            try:
-                                if refinement_method == 'diffusion':
-                                    refine_resp, refine_err = safe_request(
-                                        f'{DIFFUSION_URL}/refine',
-                                        json_data={'sanitized_features': sf.get('sanitized_features', []), 'feedback': fp['feedback']},
-                                        timeout=DIFFUSION_TIMEOUT,
-                                        service_name='Diffusion'
-                                    )
-                                elif refinement_method == 'multi-agent':
-                                    refine_resp, refine_err = safe_request(
-                                        f'{MULTI_AGENT_URL}/refine',
-                                        json_data={'current_code': decompiled.get(sf['name'], ''), 'feedback': fp['feedback']},
-                                        timeout=MULTI_AGENT_TIMEOUT,
-                                        service_name='Multi-Agent'
-                                    )
-                                else:  # cot
-                                    refine_resp, refine_err = safe_request(
-                                        f'{COT_URL}/refine',
-                                        json_data={'current_code': decompiled.get(sf['name'], ''), 'feedback': fp['feedback']},
-                                        timeout=COT_TIMEOUT,
-                                        service_name='CoT'
-                                    )
-                                
-                                if refine_err:
-                                    print(f"Refinement warning: {refine_err}")
-                            except Exception as e:
-                                print(f"Refinement error: {e}")
-        
-        # Return best result
-        return jsonify({
-            'cpg_analysis': cpg_analysis,
-            'decompilation': best_decompilation or {},
-            'verification': refinement_history[-1]['verification'] if refinement_history else {},
-            'refinement_history': refinement_history,
-            'final_reward': best_reward,
-            'iterations_used': len(refinement_history),
-            'success': best_reward >= REWARD_THRESHOLD
-        })
-        
-    except Exception as e:
-        import traceback
-        return jsonify({
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
-        # STEP 2: Build Code Property Graph (CPG)
-        print("Step 2: Building CPG (Hypergraph)...")
-        cpg_analysis = {}
-        
-        for func in analysis_data['functions']:
-            pcode = func['pcode']
-            cfg = func['cfg']
+                # ── Candidate 2: Diffusion ──
+                try:
+                    if iteration == 0 or not base_code:
+                        diff_resp, diff_err = safe_request(
+                            f'{DIFFUSION_URL}/generate',
+                            json_data={'binary_features': features, 'max_length': 512},
+                            timeout=DIFFUSION_TIMEOUT,
+                            service_name='Diffusion'
+                        )
+                    else:
+                        diff_resp, diff_err = safe_request(
+                            f'{DIFFUSION_URL}/refine',
+                            json_data={
+                                'current_code': base_code,
+                                'sanitized_features': features,
+                                'feedback': func.get('refinement_feedback', '')
+                            },
+                            timeout=DIFFUSION_TIMEOUT,
+                            service_name='Diffusion'
+                        )
+                    
+                    if not diff_err and diff_resp and diff_resp.status_code == 200:
+                        diff_code = diff_resp.json().get('code', diff_resp.json().get('refined_code', ''))
+                        if diff_code:
+                            candidates[func_name].append({'source': 'diffusion', 'code': diff_code, 'reward': 0.0})
+                            print(f"    [+] Diffusion candidate for {func_name}")
+                    else:
+                        print(f"    [-] Diffusion failed for {func_name}: {diff_err}")
+                except Exception as e:
+                    print(f"    [-] Diffusion error for {func_name}: {e}")
+                
+                # ── Candidate 3: Multi-Agent ──
+                try:
+                    if iteration == 0 or not base_code:
+                        ma_resp, ma_err = safe_request(
+                            f'{MULTI_AGENT_URL}/analyze',
+                            json_data={'features': features, 'cpg': cpg},
+                            timeout=MULTI_AGENT_TIMEOUT,
+                            service_name='Multi-Agent'
+                        )
+                    else:
+                        ma_resp, ma_err = safe_request(
+                            f'{MULTI_AGENT_URL}/refine',
+                            json_data={
+                                'current_code': base_code,
+                                'features': features,
+                                'cpg': cpg,
+                                'feedback': func.get('refinement_feedback', '')
+                            },
+                            timeout=MULTI_AGENT_TIMEOUT,
+                            service_name='Multi-Agent'
+                        )
+                    
+                    if not ma_err and ma_resp and ma_resp.status_code == 200:
+                        ma_code = ma_resp.json().get('code', ma_resp.json().get('refined_code', ''))
+                        if ma_code:
+                            candidates[func_name].append({'source': 'multi-agent', 'code': ma_code, 'reward': 0.0})
+                            print(f"    [+] Multi-Agent candidate for {func_name}")
+                    else:
+                        print(f"    [-] Multi-Agent failed for {func_name}: {ma_err}")
+                except Exception as e:
+                    print(f"    [-] Multi-Agent error for {func_name}: {e}")
+                
+                # Fallback: if no candidates, keep base code or generate placeholder
+                if not candidates[func_name]:
+                    if base_code:
+                        candidates[func_name].append({'source': 'fallback', 'code': base_code, 'reward': 0.0})
+                    else:
+                        candidates[func_name].append({'source': 'fallback', 'code': f'// Decompilation failed for {func_name}', 'reward': 0.0})
             
-            cpg_resp = requests.post(
-                f'{CPG_URL}/build-cpg',
-                json={'pcode': pcode, 'cfg': cfg},
-                timeout=60
-            )
+            # ─────────────────────────────────────────────────────────────
+            # PHASE B: Score ALL candidates with RL Verifier
+            # ─────────────────────────────────────────────────────────────
+            print("\n  Phase B: Scoring all candidates with RL Verifier (Z3)...")
             
-            if cpg_resp.status_code == 200:
-                cpg_analysis[func['name']] = cpg_resp.json()['cpg']
-        
-        # STEP 3: Edge-Augmented Graph Transformer (EAGT) - Detect obfuscation
-        print("Step 3: Graph Transformer Sanitization...")
-        sanitized_functions = []
-        
-        for func in analysis_data['functions']:
-            func_cpg = cpg_analysis.get(func['name'], {})
+            for func_name, func_candidates in candidates.items():
+                for candidate in func_candidates:
+                    try:
+                        verify_resp, verify_err = safe_request(
+                            f'{RL_URL}/verify',
+                            json_data={
+                                'source_code': candidate['code'],
+                                'original_binary_path': file_path,
+                                'use_symbolic': True
+                            },
+                            timeout=RL_TIMEOUT,
+                            service_name='RL'
+                        )
+                        
+                        if not verify_err and verify_resp and verify_resp.status_code == 200:
+                            verification = verify_resp.json()
+                            candidate['reward'] = verification.get('reward', 0.0)
+                            candidate['verification'] = verification
+                            candidate['feedback'] = verification.get('feedback', '')
+                        else:
+                            candidate['reward'] = 0.0
+                            candidate['verification'] = {'error': verify_err}
+                            candidate['feedback'] = ''
+                    except Exception as e:
+                        candidate['reward'] = 0.0
+                        candidate['verification'] = {'error': str(e)}
+                        candidate['feedback'] = ''
+                
+                # Sort candidates by reward (descending)
+                func_candidates.sort(key=lambda c: c['reward'], reverse=True)
+                
+                best_candidate = func_candidates[0]
+                print(f"    {func_name}: Best={best_candidate['source']} (reward={best_candidate['reward']:.2f})")
+                for c in func_candidates[1:]:
+                    print(f"      -> {c['source']}: reward={c['reward']:.2f}")
             
-            gnn_resp = requests.post(
-                f'{GNN_URL}/sanitize',
-                json={
-                    'pcode': func['pcode'],
-                    'cfg': func['cfg'],
-                    'cpg': func_cpg  # Pass CPG for dominator-aware attention
-                },
-                timeout=60
-            )
+            # ─────────────────────────────────────────────────────────────
+            # PHASE C: Select BEST candidate per function for next iteration
+            # ─────────────────────────────────────────────────────────────
+            print("\n  Phase C: Selecting best candidates for collaborative refinement...")
             
-            if gnn_resp.status_code == 200:
-                sanitized_data = gnn_resp.json()
-                sanitized_functions.append({
-                    'name': func['name'],
-                    'sanitized_features': sanitized_data['sanitized_features'],
-                    'summary': f"Function with {len(sanitized_data['sanitized_features'])} instructions"
-                })
-        
-        # STEP 4: Hierarchical LLM with RAG - Decompile with verify-refine loop
-        print("Step 4: Hierarchical LLM Decompilation with Verify-Refine Loop...")
-        refinement_history = []
-        best_decompilation = None
-        best_reward = -float('inf')
-        
-        for iteration in range(max_iterations):
-            print(f"  Iteration {iteration + 1}/{max_iterations}")
-            
-            # Decompile entire binary
-            llm_resp = requests.post(
-                f'{LLM_URL}/decompile-binary',
-                json={'functions': sanitized_functions},
-                timeout=180
-            )
-            
-            if llm_resp.status_code != 200:
-                break
-            
-            decompiled = llm_resp.json()['decompiled']
-            
-            # STEP 5: Neural-Symbolic Verification with Z3
-            print(f"  Step 5: Verifying with symbolic execution...")
-            verification_results = {}
+            iteration_decompilation = {}
+            iteration_verification = {}
             total_reward = 0
             
-            for func_name, source_code in decompiled.items():
-                verify_resp = requests.post(
-                    f'{RL_URL}/verify',
-                    json={
-                        'source_code': source_code,
-                        'original_binary_path': file_path,
-                        'use_symbolic': True
-                    },
-                    timeout=60
-                )
+            for func_name, func_candidates in candidates.items():
+                best = func_candidates[0]
+                iteration_decompilation[func_name] = best['code']
+                iteration_verification[func_name] = best.get('verification', {})
+                total_reward += best['reward']
                 
-                if verify_resp.status_code == 200:
-                    verification = verify_resp.json()
-                    verification_results[func_name] = verification
-                    total_reward += verification.get('reward', 0)
+                # Update current_best_code for next iteration's collaborative refinement
+                current_best_code[func_name] = best['code']
+                
+                # Store feedback for refinement
+                for sf in sanitized_functions:
+                    if sf['name'] == func_name:
+                        sf['refinement_feedback'] = best.get('feedback', '')
+                        sf['best_source'] = best['source']
             
             # Record this iteration
             refinement_history.append({
                 'iteration': iteration + 1,
                 'reward': total_reward,
-                'decompilation': decompiled,
-                'verification': verification_results
+                'decompilation': iteration_decompilation,
+                'verification': iteration_verification,
+                'candidate_breakdown': {
+                    fn: [{'source': c['source'], 'reward': c['reward']} for c in cands]
+                    for fn, cands in candidates.items()
+                }
             })
             
-            # Check if this is best so far
+            print(f"\n  Iteration {iteration + 1} Total Reward: {total_reward:.2f}")
+            
+            # Update global best
             if total_reward > best_reward:
                 best_reward = total_reward
-                best_decompilation = decompiled
+                best_decompilation = iteration_decompilation.copy()
+                print(f"  * New best! (reward={best_reward:.2f})")
             
             # Check if we've reached acceptable quality
             if total_reward >= REWARD_THRESHOLD or not enable_refinement:
-                print(f"  ✓ Acceptable quality reached (reward: {total_reward})")
+                print(f"\n  [OK] Acceptable quality reached (reward: {total_reward:.2f} >= threshold: {REWARD_THRESHOLD})")
                 break
             
-            # STEP 6: Generate feedback for refinement
-            print(f"  Generating feedback for refinement (reward: {total_reward})...")
-            feedback_prompts = []
-            for func_name, verification in verification_results.items():
-                if verification.get('feedback'):
-                    feedback_prompts.append({
-                        'function': func_name,
-                        'feedback': verification['feedback']
-                    })
-            
-            # Update sanitized functions with feedback for next iteration
-            if feedback_prompts:
-                for sf in sanitized_functions:
-                    for fp in feedback_prompts:
-                        if sf['name'] == fp['function']:
-                            sf['refinement_feedback'] = fp['feedback']
+            if iteration < max_iterations - 1:
+                print(f"\n  -> Continuing to iteration {iteration + 2} (all generators will refine best code)...")
         
         # Return best result
         return jsonify({
@@ -459,11 +413,10 @@ def sanitize():
             'refinement_history': refinement_history,
             'final_reward': best_reward,
             'iterations_used': len(refinement_history),
+            'architecture': 'parallel-candidate-collaborative-refinement',
             'success': best_reward >= REWARD_THRESHOLD
         })
         
-    except requests.Timeout:
-        return jsonify({'error': 'Service timeout'}), 504
     except Exception as e:
         import traceback
         return jsonify({
@@ -473,10 +426,6 @@ def sanitize():
 
 @app.route('/decompile', methods=['POST'])
 def decompile():
-    """
-    Legacy endpoint for direct decompilation (bypasses Ghidra).
-    Used by Node.js backend for pre-analyzed binaries.
-    """
     try:
         data = request.json
         features = data.get('features')
@@ -510,10 +459,6 @@ def decompile():
 
 @app.route('/chat', methods=['POST'])
 def ai_chat():
-    """
-    AI chat assistant for code explanation and Q&A.
-    Uses Chain-of-Thought reasoning for complex questions.
-    """
     try:
         data = request.json
         message = data.get('message', '')
@@ -545,12 +490,6 @@ def ai_chat():
 
 @app.route('/advanced-decompile', methods=['POST'])
 def advanced_decompile():
-    """
-    Advanced decompilation using all new techniques:
-    - Diffusion model for generation
-    - Multi-agent collaboration
-    - Chain-of-Thought reasoning
-    """
     try:
         data = request.json
         binary_features = data.get('binary_features', [])

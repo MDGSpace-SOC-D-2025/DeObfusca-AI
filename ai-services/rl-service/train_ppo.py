@@ -1,8 +1,4 @@
-"""
-Reinforcement Learning training harness for decompiler.
 
-Uses PPO to optimize decompilation quality based on compilation + fuzzing rewards.
-"""
 
 import torch
 import torch.nn as nn
@@ -13,28 +9,17 @@ from collections import deque
 import requests
 
 class PPOAgent:
-    """
-    Proximal Policy Optimization agent for decompilation.
-    
-    State: Sanitized P-Code features
-    Action: Select decompilation strategy/parameters
-    Reward: Compilation success (0.5) + Behavioral match (10.0)
-    """
     def __init__(self, state_dim, action_dim, lr=3e-4):
         self.policy = PolicyNetwork(state_dim, action_dim)
         self.value = ValueNetwork(state_dim)
-        
         self.optimizer_policy = optim.Adam(self.policy.parameters(), lr=lr)
         self.optimizer_value = optim.Adam(self.value.parameters(), lr=lr)
-        
         self.gamma = 0.99
         self.eps_clip = 0.2
         self.K_epochs = 4
-        
         self.memory = []
     
     def select_action(self, state):
-        """Select action using current policy."""
         state = torch.FloatTensor(state).unsqueeze(0)
         
         with torch.no_grad():
@@ -45,11 +30,9 @@ class PPOAgent:
         return action.item()
     
     def store_transition(self, state, action, reward, next_state, done):
-        """Store experience in memory."""
         self.memory.append((state, action, reward, next_state, done))
     
     def update(self):
-        """Update policy using PPO."""
         if len(self.memory) < 32:
             return
         
@@ -101,7 +84,6 @@ class PPOAgent:
         self.memory = []
     
     def _calculate_returns(self, rewards):
-        """Calculate discounted returns."""
         returns = []
         R = 0
         
@@ -115,7 +97,6 @@ class PPOAgent:
         return returns
 
 class PolicyNetwork(nn.Module):
-    """Policy network for PPO."""
     def __init__(self, state_dim, action_dim):
         super(PolicyNetwork, self).__init__()
         
@@ -132,7 +113,6 @@ class PolicyNetwork(nn.Module):
         return self.fc(x)
 
 class ValueNetwork(nn.Module):
-    """Value network for PPO."""
     def __init__(self, state_dim):
         super(ValueNetwork, self).__init__()
         
@@ -148,7 +128,6 @@ class ValueNetwork(nn.Module):
         return self.fc(x)
 
 def train_rl_agent(num_episodes=1000):
-    """Train PPO agent on decompilation task."""
     
     STATE_DIM = 128  # Feature dimension
     ACTION_DIM = 4   # Number of decompilation strategies
@@ -182,7 +161,6 @@ def train_rl_agent(num_episodes=1000):
     print("Training complete")
 
 def get_training_sample():
-    """Get a training sample from preprocessed dataset."""
     # In production, load from actual dataset of obfuscated binaries
     # For now, simulate realistic P-Code features
     state_features = {
@@ -210,7 +188,6 @@ def get_training_sample():
     return full_vector
 
 def execute_decompilation(state, action):
-    """Execute decompilation with selected strategy based on action."""
     # Action space: 0=conservative, 1=aggressive, 2=balanced, 3=type-focused
     strategies = {
         0: "// Conservative decompilation\nint function(int x) {\n    return x + 1;\n}",
@@ -222,7 +199,6 @@ def execute_decompilation(state, action):
     return strategies.get(action, strategies[0])
 
 def verify_decompilation(source_code):
-    """Verify decompilation and return reward."""
     try:
         response = requests.post(
             'http://rl-service:5004/verify',

@@ -1,409 +1,425 @@
-# Advanced AI Service - Diffusion-based Code Generation
-# Research: "DiffusionCode: Denoising Diffusion Probabilistic Models for Code Generation" (2024)
-# Iterative refinement through controlled noise injection and denoising
+
 
 from flask import Flask, request, jsonify
 import torch
-import torch.nn as nn
-import numpy as np
-from typing import List, Dict
-import math
+import torch.nn.functional as F
+import os
+import json
+from pathlib import Path
+from typing import List, Dict, Optional
+from dataclasses import dataclass
+
+from model import D3PMCodeGenerator, CodeTokenizer, create_diffusion_model
 
 app = Flask(__name__)
 
-class DiffusionCodeGenerator(nn.Module):
-    """
-    Diffusion-based code generation for decompilation.
+
+@dataclass
+class GenerationResult:
+    code: str
+    confidence: float
+    num_steps: int
+    tokens_generated: int
+
+
+class DiffusionCodeGenerator:
+
     
-    Based on latest research (2024-2025):
-    - Denoising Diffusion Probabilistic Models (DDPM) for code
-    - Conditional generation based on binary features
-    - Iterative refinement produces higher quality output than autoregressive
-    
-    Key advantages:
-    - Better handling of long-range dependencies
-    - More diverse outputs (less mode collapse)
-    - Gradual refinement allows intermediate verification
-    """
-    
-    def __init__(self, vocab_size=50000, d_model=768, num_timesteps=1000):
-        super().__init__()
+    def __init__(
+        self,
+        model_path: Optional[str] = None,
+        tokenizer_path: Optional[str] = None,
+        pcode_vocab_path: Optional[str] = None,
+        config: Optional[Dict] = None
+    ):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        self.vocab_size = vocab_size
-        self.d_model = d_model
-        self.num_timesteps = num_timesteps
+        # Default config
+        self.config = config or {
+            'hidden_dim': 512,
+            'num_layers': 12,
+            'max_code_len': 512,
+            'max_pcode_len': 256,
+            'num_timesteps': 1000,
+            'num_inference_steps': 50,
+            'temperature': 0.8,
+            'top_k': 50,
+            'top_p': 0.95
+        }
         
-        # Embedding layers
-        self.token_embed = nn.Embedding(vocab_size, d_model)
-        self.time_embed = nn.Sequential(
-            SinusoidalPositionEmbeddings(d_model),
-            nn.Linear(d_model, d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model)
+        # Load tokenizers
+        self.code_tokenizer = self._load_code_tokenizer(tokenizer_path)
+        self.pcode_vocab = self._load_pcode_vocab(pcode_vocab_path)
+        
+        # Load model
+        self.model = self._load_model(model_path)
+        
+        print(f"Diffusion Code Generator initialized on {self.device}")
+    
+    def _load_code_tokenizer(self, path: Optional[str]) -> CodeTokenizer:
+
+        if path and os.path.exists(path):
+            return CodeTokenizer.load(path)
+        return CodeTokenizer()
+    
+    def _load_pcode_vocab(self, path: Optional[str]) -> Dict[str, int]:
+
+        if path and os.path.exists(path):
+            with open(path, 'r') as f:
+                return json.load(f)
+        
+        # Default vocabulary
+        mnemonics = [
+            '<PAD>', '<UNK>', '<START>', '<END>',
+            'COPY', 'LOAD', 'STORE', 'PIECE', 'SUBPIECE',
+            'INT_ADD', 'INT_SUB', 'INT_MULT', 'INT_DIV', 'INT_SDIV',
+            'INT_REM', 'INT_SREM', 'INT_NEGATE',
+            'INT_AND', 'INT_OR', 'INT_XOR', 'INT_NOT',
+            'INT_LEFT', 'INT_RIGHT', 'INT_SRIGHT',
+            'INT_EQUAL', 'INT_NOTEQUAL', 'INT_LESS', 'INT_SLESS',
+            'INT_LESSEQUAL', 'INT_SLESSEQUAL',
+            'BOOL_AND', 'BOOL_OR', 'BOOL_XOR', 'BOOL_NEGATE',
+            'FLOAT_ADD', 'FLOAT_SUB', 'FLOAT_MULT', 'FLOAT_DIV',
+            'BRANCH', 'CBRANCH', 'BRANCHIND', 'CALL', 'CALLIND', 'RETURN',
+            'PUSH', 'POP', 'MOV', 'LEA', 'NOP', 'JMP',
+            'CMP', 'TEST', 'XOR', 'AND', 'OR', 'ADD', 'SUB', 'MUL', 'DIV',
+        ]
+        return {m: i for i, m in enumerate(mnemonics)}
+    
+    def _load_model(self, path: Optional[str]) -> D3PMCodeGenerator:
+
+        model = create_diffusion_model(
+            code_vocab_size=self.code_tokenizer.current_vocab_size,
+            pcode_vocab_size=len(self.pcode_vocab),
+            hidden_dim=self.config['hidden_dim'],
+            num_layers=self.config['num_layers']
         )
         
-        # Condition encoder (for binary features)
-        self.condition_encoder = nn.Sequential(
-            nn.Linear(512, d_model),  # Binary feature dim
-            nn.LayerNorm(d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model)
-        )
+        if path and os.path.exists(path):
+            checkpoint = torch.load(path, map_location=self.device)
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                model.load_state_dict(checkpoint)
+            print(f"Loaded model from {path}")
+        else:
+            print("Warning: No pretrained model found. Using random initialization.")
+            print("Run train_diffusion.py to train the model first.")
         
-        # Transformer blocks for denoising
-        self.blocks = nn.ModuleList([
-            DiffusionBlock(d_model, num_heads=8, dropout=0.1)
-            for _ in range(12)
-        ])
+        model.to(self.device)
+        model.eval()
         
-        # Output projection
-        self.output = nn.Linear(d_model, vocab_size)
-        
-        # Beta schedule for noise
-        self.register_buffer('betas', self._cosine_beta_schedule())
-        self.register_buffer('alphas', 1.0 - self.betas)
-        self.register_buffer('alphas_cumprod', torch.cumprod(self.alphas, dim=0))
-        
-    def _cosine_beta_schedule(self):
-        """Improved noise schedule from 'Improved DDPM' paper."""
-        steps = self.num_timesteps
-        s = 0.008
-        t = torch.linspace(0, steps, steps + 1)
-        alphas_cumprod = torch.cos((t / steps + s) / (1 + s) * math.pi * 0.5) ** 2
-        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-        return torch.clip(betas, 0.0001, 0.9999)
+        return model
     
-    def forward(self, x, t, condition):
-        """
-        Denoise step.
+    def encode_pcode(self, pcode_ops: List[Dict]) -> torch.Tensor:
+
+        max_len = self.config['max_pcode_len']
         
-        Args:
-            x: Noisy tokens [batch, seq_len]
-            t: Timestep [batch]
-            condition: Binary features [batch, 512]
-        """
-        # Embed tokens and time
-        x_embed = self.token_embed(x)  # [batch, seq_len, d_model]
-        t_embed = self.time_embed(t)  # [batch, d_model]
-        c_embed = self.condition_encoder(condition)  # [batch, d_model]
+        tokens = []
+        for op in pcode_ops[:max_len]:
+            if isinstance(op, dict):
+                mnemonic = op.get('mnemonic', 'UNKNOWN').upper()
+            else:
+                mnemonic = str(op).upper()
+            
+            token_id = self.pcode_vocab.get(mnemonic, self.pcode_vocab.get('<UNK>', 1))
+            tokens.append(token_id)
         
-        # Add time and condition embeddings
-        t_embed = t_embed.unsqueeze(1)  # [batch, 1, d_model]
-        c_embed = c_embed.unsqueeze(1)  # [batch, 1, d_model]
-        h = x_embed + t_embed + c_embed
+        # Pad
+        while len(tokens) < max_len:
+            tokens.append(self.pcode_vocab.get('<PAD>', 0))
         
-        # Apply transformer blocks
-        for block in self.blocks:
-            h = block(h)
-        
-        # Predict noise
-        noise_pred = self.output(h)
-        
-        return noise_pred
+        return torch.tensor([tokens[:max_len]], dtype=torch.long, device=self.device)
     
     @torch.no_grad()
-    def generate(self, condition, max_length=512, temperature=1.0):
-        """
-        Generate code via iterative denoising.
-        
-        Args:
-            condition: Binary features [batch, 512]
-            max_length: Maximum sequence length
-            temperature: Sampling temperature
-        """
-        batch_size = condition.shape[0]
-        device = condition.device
-        
-        # Start from pure noise
-        x = torch.randint(0, self.vocab_size, (batch_size, max_length), device=device)
-        
-        # Iteratively denoise
-        for t in reversed(range(self.num_timesteps)):
-            t_batch = torch.full((batch_size,), t, device=device, dtype=torch.long)
-            
-            # Predict noise
-            noise_pred = self(x, t_batch, condition)
-            
-            # Sample from predicted distribution
-            alpha_t = self.alphas_cumprod[t]
-            alpha_t_prev = self.alphas_cumprod[t - 1] if t > 0 else torch.tensor(1.0)
-            
-            # DDPM sampling formula
-            x = self._denoise_step(x, noise_pred, alpha_t, alpha_t_prev, t, temperature)
-        
-        return x
-    
-    def _denoise_step(self, x, noise_pred, alpha_t, alpha_t_prev, t, temperature):
-        """Single denoising step with temperature control."""
-        # Get predicted x_0
-        pred_x0 = (x - torch.sqrt(1 - alpha_t) * noise_pred) / torch.sqrt(alpha_t)
-        pred_x0 = torch.clamp(pred_x0, 0, self.vocab_size - 1)
-        
-        # Sample with temperature
-        if t > 0:
-            noise = torch.randn_like(x.float()) * temperature
-            x = torch.sqrt(alpha_t_prev) * pred_x0 + torch.sqrt(1 - alpha_t_prev) * noise
-        else:
-            x = pred_x0
-        
-        return x.long()
+    def generate(
+        self,
+        pcode_ops: List[Dict],
+        max_length: Optional[int] = None,
+        num_steps: Optional[int] = None,
+        temperature: Optional[float] = None,
+        top_k: Optional[int] = None,
+        top_p: Optional[float] = None
+    ) -> GenerationResult:
 
-
-class DiffusionBlock(nn.Module):
-    """Transformer block for diffusion model."""
-    
-    def __init__(self, d_model, num_heads, dropout=0.1):
-        super().__init__()
-        self.attention = nn.MultiheadAttention(d_model, num_heads, dropout=dropout, batch_first=True)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model * 4),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * 4, d_model),
-            nn.Dropout(dropout)
+        max_length = max_length or self.config['max_code_len']
+        num_steps = num_steps or self.config['num_inference_steps']
+        temperature = temperature or self.config['temperature']
+        top_k = top_k or self.config.get('top_k')
+        top_p = top_p or self.config.get('top_p')
+        
+        # Encode P-Code
+        pcode_tokens = self.encode_pcode(pcode_ops)
+        
+        # Generate using diffusion
+        generated_tokens = self.model.generate(
+            pcode_tokens=pcode_tokens,
+            max_length=max_length,
+            num_steps=num_steps,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p
+        )
+        
+        # Decode to text
+        token_ids = generated_tokens[0].cpu().tolist()
+        code = self.code_tokenizer.decode(token_ids, skip_special_tokens=True)
+        
+        # Calculate confidence (based on how many tokens were generated vs masked)
+        mask_id = self.code_tokenizer.mask_token_id
+        non_mask_count = sum(1 for t in token_ids if t != mask_id)
+        confidence = non_mask_count / max_length
+        
+        return GenerationResult(
+            code=code,
+            confidence=confidence,
+            num_steps=num_steps,
+            tokens_generated=non_mask_count
         )
     
-    def forward(self, x):
-        # Self-attention with residual
-        attn_out, _ = self.attention(x, x, x)
-        x = self.norm1(x + attn_out)
+    @torch.no_grad()
+    def refine(
+        self,
+        code: str,
+        pcode_ops: List[Dict],
+        num_steps: int = 10,
+        mask_ratio: float = 0.15
+    ) -> GenerationResult:
+
+        max_length = self.config['max_code_len']
         
-        # FFN with residual
-        ffn_out = self.ffn(x)
-        x = self.norm2(x + ffn_out)
+        # Encode existing code
+        code_ids = self.code_tokenizer.encode(
+            code,
+            max_length=max_length,
+            add_special_tokens=True
+        )
+        code_tokens = torch.tensor([code_ids], dtype=torch.long, device=self.device)
         
-        return x
+        # Randomly mask some tokens
+        mask = torch.rand(1, max_length, device=self.device) < mask_ratio
+        mask_token_id = self.code_tokenizer.mask_token_id
+        code_tokens[mask] = mask_token_id
+        
+        # Encode P-Code
+        pcode_tokens = self.encode_pcode(pcode_ops)
+        
+        # Encode context
+        context = self.model.pcode_encoder(pcode_tokens)
+        
+        # Iteratively refine
+        for step in range(num_steps):
+            t_val = self.model.num_timesteps // (step + 1)
+            t = torch.full((1,), t_val, device=self.device, dtype=torch.long)
+            
+            # Predict original tokens
+            logits = self.model.denoiser(code_tokens, t, context)
+            logits = logits / self.config['temperature']
+            
+            # Sample for masked positions only
+            probs = F.softmax(logits, dim=-1)
+            new_tokens = torch.multinomial(probs.view(-1, probs.size(-1)), 1)
+            new_tokens = new_tokens.view(1, max_length)
+            
+            # Replace only masked tokens
+            code_tokens = torch.where(
+                code_tokens == mask_token_id,
+                new_tokens,
+                code_tokens
+            )
+        
+        # Decode
+        token_ids = code_tokens[0].cpu().tolist()
+        refined_code = self.code_tokenizer.decode(token_ids, skip_special_tokens=True)
+        
+        non_mask_count = sum(1 for t in token_ids if t != mask_token_id)
+        confidence = non_mask_count / max_length
+        
+        return GenerationResult(
+            code=refined_code,
+            confidence=confidence,
+            num_steps=num_steps,
+            tokens_generated=non_mask_count
+        )
 
 
-class SinusoidalPositionEmbeddings(nn.Module):
-    """Sinusoidal position embeddings for timesteps."""
+# Global generator instance
+generator = None
+
+
+def load_generator():
+
+    global generator
     
-    def __init__(self, dim):
-        super().__init__()
-        self.dim = dim
+    model_path = os.getenv('MODEL_PATH', '/app/models/diffusion_model.pth')
+    tokenizer_path = os.getenv('TOKENIZER_PATH', '/app/models/code_tokenizer.json')
+    vocab_path = os.getenv('VOCAB_PATH', '/app/models/pcode_vocab.json')
     
-    def forward(self, time):
-        device = time.device
-        half_dim = self.dim // 2
-        embeddings = math.log(10000) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
-        embeddings = time[:, None] * embeddings[None, :]
-        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
-        return embeddings
+    # Check local paths
+    local_model = Path(__file__).parent / 'checkpoints' / 'best_model.pth'
+    local_tokenizer = Path(__file__).parent / 'checkpoints' / 'code_tokenizer.json'
+    local_vocab = Path(__file__).parent / 'checkpoints' / 'pcode_vocab.json'
+    
+    if local_model.exists():
+        model_path = str(local_model)
+    if local_tokenizer.exists():
+        tokenizer_path = str(local_tokenizer)
+    if local_vocab.exists():
+        vocab_path = str(local_vocab)
+    
+    config = {
+        'hidden_dim': int(os.getenv('HIDDEN_DIM', '512')),
+        'num_layers': int(os.getenv('NUM_LAYERS', '12')),
+        'max_code_len': int(os.getenv('MAX_CODE_LEN', '512')),
+        'max_pcode_len': int(os.getenv('MAX_PCODE_LEN', '256')),
+        'num_inference_steps': int(os.getenv('NUM_STEPS', '50')),
+        'temperature': float(os.getenv('TEMPERATURE', '0.8')),
+        'top_k': int(os.getenv('TOP_K', '50')) if os.getenv('TOP_K') else None,
+        'top_p': float(os.getenv('TOP_P', '0.95')) if os.getenv('TOP_P') else None,
+    }
+    
+    try:
+        generator = DiffusionCodeGenerator(
+            model_path=model_path,
+            tokenizer_path=tokenizer_path,
+            pcode_vocab_path=vocab_path,
+            config=config
+        )
+        print("Diffusion Code Generator loaded successfully")
+    except Exception as e:
+        print(f"Error loading generator: {e}")
+        generator = DiffusionCodeGenerator(config=config)
 
-
-# Global model instance
-diffusion_model = None
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'model': 'diffusion-code-generator'})
+
+    return jsonify({
+        'status': 'ok',
+        'service': 'diffusion-code-generator',
+        'model_loaded': generator is not None,
+        'device': str(generator.device) if generator else 'unknown'
+    })
+
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    """
-    Generate code using diffusion model.
-    
-    Request:
-    {
-        "binary_features": [...],  # Feature vector from binary analysis
-        "max_length": 512,
-        "temperature": 1.0,
-        "num_samples": 1
-    }
-    """
-    global diffusion_model
-    
+
     try:
         data = request.json
-        binary_features = torch.tensor(data.get('binary_features', [])).unsqueeze(0)
-        max_length = data.get('max_length', 512)
-        temperature = data.get('temperature', 1.0)
+        pcode = data.get('pcode', data.get('features', []))
         
-        if diffusion_model is None:
-            diffusion_model = DiffusionCodeGenerator()
-            # Load pretrained weights if available
-            # diffusion_model.load_state_dict(torch.load('diffusion_weights.pt'))
-            diffusion_model.eval()
+        if not pcode:
+            return jsonify({'error': 'pcode required'}), 400
         
-        # Generate code
-        with torch.no_grad():
-            generated_tokens = diffusion_model.generate(
-                binary_features,
-                max_length=max_length,
-                temperature=temperature
-            )
+        if not generator:
+            return jsonify({'error': 'Generator not initialized'}), 503
         
-        # Convert tokens to code (mock tokenizer for now)
-        generated_code = tokens_to_code(generated_tokens[0])
+        result = generator.generate(
+            pcode_ops=pcode,
+            max_length=data.get('max_length'),
+            num_steps=data.get('num_steps'),
+            temperature=data.get('temperature'),
+            top_k=data.get('top_k'),
+            top_p=data.get('top_p')
+        )
         
         return jsonify({
-            'code': generated_code,
-            'tokens': generated_tokens[0].tolist()[:100],  # First 100 tokens
-            'method': 'diffusion'
+            'code': result.code,
+            'confidence': result.confidence,
+            'num_steps': result.num_steps,
+            'tokens_generated': result.tokens_generated,
+            'success': True
         })
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 
 @app.route('/refine', methods=['POST'])
 def refine():
-    """
-    Refine code through iterative denoising.
-    
-    Request:
-    {
-        "noisy_code": "...",
-        "binary_features": [...],
-        "iterations": 10
-    }
-    """
-    global diffusion_model
-    
+
     try:
         data = request.json
-        binary_features = torch.tensor(data.get('binary_features', [])).unsqueeze(0)
+        code = data.get('code', '')
+        pcode = data.get('pcode', [])
         
-        if diffusion_model is None:
-            diffusion_model = DiffusionCodeGenerator()
-            diffusion_model.eval()
+        if not code:
+            return jsonify({'error': 'code required'}), 400
         
-        # Refine through denoising iterations
-        with torch.no_grad():
-            refined_tokens = diffusion_model.generate(
-                binary_features,
-                max_length=512,
-                temperature=0.5  # Lower temperature for refinement
-            )
+        if not generator:
+            return jsonify({'error': 'Generator not initialized'}), 503
         
-        refined_code = tokens_to_code(refined_tokens[0])
+        result = generator.refine(
+            code=code,
+            pcode_ops=pcode,
+            num_steps=data.get('num_steps', 10),
+            mask_ratio=data.get('mask_ratio', 0.15)
+        )
         
         return jsonify({
-            'refined_code': refined_code,
-            'method': 'diffusion_refinement'
+            'refined_code': result.code,
+            'confidence': result.confidence,
+            'success': True
         })
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 
-def code_to_tokens(code: str) -> List[int]:
-    """Convert C code to token IDs for diffusion processing."""
-    # Reverse mapping: string -> token ID
-    string_to_token = {
-        ' ': 0, '{': 1, '}': 2, '(': 3, ')': 4, ';': 5, ',': 6,
-        'int': 7, 'void': 8, 'char': 9, 'return': 10, 'if': 11,
-        'else': 12, 'for': 13, 'while': 14, '=': 15, '+': 16,
-        '-': 17, '*': 18, '/': 19, '<': 20, '>': 21, '==': 22,
-        '!=': 23, '&&': 24, '||': 25, 'break': 26, 'continue': 27
-    }
-    
-    tokens = []
-    i = 0
-    code = code.strip()
-    
-    while i < len(code):
-        # Try multi-char operators first
-        matched = False
-        for length in [2, 1]:  # Check 2-char then 1-char
-            if i + length <= len(code):
-                substr = code[i:i+length]
-                if substr in string_to_token:
-                    tokens.append(string_to_token[substr])
-                    i += length
-                    matched = True
-                    break
-        
-        if matched:
-            continue
-        
-        # Check for keywords (word boundaries)
-        for keyword in ['continue', 'return', 'while', 'break', 'else', 'void', 'char', 'for', 'int', 'if']:
-            if code[i:].startswith(keyword) and (i + len(keyword) >= len(code) or not code[i + len(keyword)].isalnum()):
-                tokens.append(string_to_token[keyword])
-                i += len(keyword)
-                matched = True
-                break
-        
-        if matched:
-            continue
-        
-        # Check for identifiers (variables)
-        if code[i].isalpha() or code[i] == '_':
-            j = i
-            while j < len(code) and (code[j].isalnum() or code[j] == '_'):
-                j += 1
-            identifier = code[i:j]
-            # Hash to token range 28-99 for variables
-            var_id = 28 + (hash(identifier) % 72)
-            tokens.append(var_id)
-            i = j
-            continue
-        
-        # Check for numbers
-        if code[i].isdigit():
-            j = i
-            while j < len(code) and code[j].isdigit():
-                j += 1
-            num = int(code[i:j])
-            # Map to constant range 100-199
-            tokens.append(100 + min(num, 99))
-            i = j
-            continue
-        
-        # Skip whitespace
-        if code[i].isspace():
-            tokens.append(0)
-            i += 1
-            continue
-        
-        # Unknown character - skip
-        i += 1
-    
-    return tokens
+@app.route('/batch-generate', methods=['POST'])
+def batch_generate():
 
-
-def tokens_to_code(tokens):
-    """Convert token IDs to C code with basic detokenization."""
-    # Simple token-to-string mapping for C keywords and common patterns
-    token_map = {
-        0: ' ', 1: '{', 2: '}', 3: '(', 4: ')', 5: ';', 6: ',',
-        7: 'int', 8: 'void', 9: 'char', 10: 'return', 11: 'if',
-        12: 'else', 13: 'for', 14: 'while', 15: '=', 16: '+',
-        17: '-', 18: '*', 19: '/', 20: '<', 21: '>', 22: '==',
-        23: '!=', 24: '&&', 25: '||', 26: 'break', 27: 'continue'
-    }
-    
-    # Convert token IDs to strings
-    code_parts = []
-    for token_id in tokens:
-        if isinstance(token_id, torch.Tensor):
-            token_id = token_id.item()
+    try:
+        data = request.json
+        functions = data.get('functions', [])
         
-        if token_id in token_map:
-            code_parts.append(token_map[token_id])
-        elif token_id < 100:  # Variable names
-            code_parts.append(f'var_{token_id}')
-        elif token_id < 200:  # Constants
-            code_parts.append(str(token_id - 100))
-        else:
-            code_parts.append('_')
-    
-    # Basic formatting
-    code = ' '.join(code_parts)
-    code = code.replace(' ;', ';').replace(' ,', ',').replace('( ', '(').replace(' )', ')')
-    code = code.replace(' {', ' {\n    ').replace('} ', '}\n')
-    
-    # Ensure it's valid C structure
-    if 'int' not in code and 'void' not in code:
-        code = f"// Generated via Diffusion Model\nint decompiled_function() {{\n    {code}\n    return 0;\n}}"
-    
-    return code
+        if not functions:
+            return jsonify({'error': 'functions required'}), 400
+        
+        if not generator:
+            return jsonify({'error': 'Generator not initialized'}), 503
+        
+        results = {}
+        for func in functions:
+            name = func.get('name', 'unnamed')
+            pcode = func.get('pcode', [])
+            
+            try:
+                result = generator.generate(pcode_ops=pcode)
+                results[name] = {
+                    'code': result.code,
+                    'confidence': result.confidence,
+                    'success': True
+                }
+            except Exception as e:
+                results[name] = {
+                    'code': f'// Error: {str(e)}',
+                    'confidence': 0.0,
+                    'success': False
+                }
+        
+        return jsonify({
+            'results': results,
+            'total': len(functions)
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5006, debug=True)
+    load_generator()
+    app.run(host='0.0.0.0', port=5004, debug=True)

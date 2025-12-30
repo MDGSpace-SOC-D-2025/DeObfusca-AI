@@ -1,13 +1,3 @@
-"""
-Hierarchical LLM Decompiler with RAG and Sliding Window.
-
-Solves the context window problem by:
-- Processing one function at a time (Local Encoder)
-- Maintaining a vector database of all functions (Global Memory Bank)
-- Using cross-attention to query other functions when needed
-
-This allows decompiling large binaries (1MB+) that would exceed token limits.
-"""
 
 from flask import Flask, request, jsonify
 import torch
@@ -22,16 +12,6 @@ from typing import List, Dict, Tuple
 app = Flask(__name__)
 
 class HierarchicalLLMDecompiler:
-    """
-    Hierarchical Encoder-Decoder with RAG (Retrieval-Augmented Generation).
-    
-    Architecture:
-    - Local Encoder: Processes one function at a time
-    - Global Memory Bank: Vector DB of all functions in binary
-    - Cross-Attention: Queries memory bank when function calls are detected
-    
-    This eliminates context window bottleneck for large binaries.
-    """
     def __init__(self, model_name='codellama/CodeLlama-7b-hf', adapter_path=None):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
@@ -66,12 +46,6 @@ class HierarchicalLLMDecompiler:
         self.function_metadata = []
         
     def build_memory_bank(self, functions: List[Dict]):
-        """
-        Build global memory bank of all functions in binary.
-        
-        Args:
-            functions: List of {'name': str, 'pcode': [...], 'summary': str}
-        """
         self.function_metadata = functions
         
         # Generate embeddings for each function
@@ -86,16 +60,6 @@ class HierarchicalLLMDecompiler:
         print(f"Memory bank built with {len(functions)} functions")
     
     def query_memory_bank(self, query: str, k: int = 3) -> List[Dict]:
-        """
-        Query memory bank for relevant functions.
-        
-        Args:
-            query: Natural language query (e.g., "decrypt string")
-            k: Number of results to return
-        
-        Returns:
-            List of function metadata dictionaries
-        """
         if self.memory_bank is None:
             return []
         
@@ -113,25 +77,7 @@ class HierarchicalLLMDecompiler:
         
         return results
     
-    def decompile_function(
-        self,
-        sanitized_features: List[dict],
-        function_name: str = "unknown",
-        context_functions: List[Dict] = None,
-        max_length: int = 2048
-    ) -> str:
-        """
-        Decompile a single function with RAG context.
-        
-        Args:
-            sanitized_features: P-Code after sanitization
-            function_name: Name of function being decompiled
-            context_functions: Related functions from memory bank
-            max_length: Max tokens to generate
-        
-        Returns:
-            Decompiled C code
-        """
+    def decompile_function(self, sanitized_features: List[dict], function_name: str = "unknown", context_functions: List[Dict] = None, max_length: int = 2048) -> str:
         # Format P-Code
         pcode_str = self._format_pcode(sanitized_features)
         
@@ -183,21 +129,7 @@ Decompiled C code: [/INST]
         
         return c_code
     
-    def decompile_binary(
-        self,
-        functions_data: List[Dict],
-        max_length: int = 2048
-    ) -> Dict[str, str]:
-        """
-        Decompile entire binary using sliding window approach.
-        
-        Args:
-            functions_data: List of functions with sanitized features
-            max_length: Max tokens per function
-        
-        Returns:
-            Dictionary mapping function names to decompiled code
-        """
+    def decompile_binary(self, functions_data: List[Dict], max_length: int = 2048) -> Dict[str, str]:
         # Build memory bank from all functions
         self.build_memory_bank(functions_data)
         
@@ -224,7 +156,6 @@ Decompiled C code: [/INST]
         return decompiled
     
     def _format_pcode(self, features: List[dict], max_ops: int = 100) -> str:
-        """Format P-Code operations as text."""
         lines = []
         for i, op in enumerate(features[:max_ops]):
             mnemonic = op.get('mnemonic', 'UNKNOWN')

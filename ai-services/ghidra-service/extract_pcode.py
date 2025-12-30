@@ -1,13 +1,9 @@
-# Ghidra script to extract P-Code and CFG
-# This script is run by Ghidra's headless analyzer
+
 
 from ghidra.program.model.pcode import PcodeOp
 from ghidra.app.decompiler import DecompInterface
 from ghidra.util.task import ConsoleTaskMonitor
 import json
-
-def extract_pcode_from_function(func):
-    """Extract P-Code operations from a function."""
     pcode_ops = []
     
     # Initialize decompiler
@@ -55,8 +51,7 @@ def extract_pcode_from_function(func):
     
     return pcode_ops
 
-def extract_cfg(func):
-    """Extract control flow graph from a function."""
+    
     cfg = {
         'nodes': [],
         'edges': []
@@ -105,8 +100,7 @@ def extract_cfg(func):
     
     return cfg
 
-def run():
-    """Main script entry point."""
+    
     
     analysis_results = {
         'program_name': currentProgram.getName(),

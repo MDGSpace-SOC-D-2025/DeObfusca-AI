@@ -1,26 +1,3 @@
-#!/usr/bin/env python3
-"""
-Data Preprocessing Pipeline for DeObfusca-AI
-
-This script converts raw binaries and source code into the preprocessed
-format required for training.
-
-Usage:
-    python3 preprocess_data.py --raw-dir ./raw_data --output-dir ./training-data
-
-Input Structure (raw_data/):
-    binaries/          - Raw ELF binaries
-    ground_truth/      - Corresponding C source files
-    
-Output Structure (training-data/):
-    preprocessed/gnn/        - GNN training data
-    preprocessed/llm/        - LLM training data
-    preprocessed/diffusion/  - Diffusion training data
-    preprocessed/rl/         - RL training data
-    splits.json              - Train/val/test splits
-    metadata.json            - Dataset metadata
-"""
-
 import os
 import sys
 import json
@@ -33,8 +10,6 @@ from collections import defaultdict
 import numpy as np
 from tqdm import tqdm
 import random
-
-# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -43,16 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 class DataPreprocessor:
-    """Preprocesses raw data for training."""
-    
     def __init__(self, raw_dir, output_dir):
         self.raw_dir = Path(raw_dir)
         self.output_dir = Path(output_dir)
-        
-        # Create output directories
         for subdir in ['gnn', 'llm', 'diffusion', 'rl']:
             (self.output_dir / 'preprocessed' / subdir).mkdir(parents=True, exist_ok=True)
-        
         self.metadata = {
             'dataset_version': '1.0.0',
             'num_samples': 0,
@@ -61,30 +31,16 @@ class DataPreprocessor:
         }
     
     def extract_ghidra_features(self, binary_path):
-        """
-        Extract features from binary using Ghidra.
-        
-        In production, this would call Ghidra headless analyzer.
-        For now, we simulate the expected output format.
-        """
-        # TODO: Replace with actual Ghidra integration
-        # Command would be:
-        # analyzeHeadless /tmp ghidra_project -import binary_path -postScript extract_features.py
-        
         logger.info(f"Extracting features from {binary_path.name}...")
-        
-        # Simulate Ghidra output
         ghidra_output = {
             'disassembly': self._extract_disassembly(binary_path),
             'cfg': self._extract_cfg(binary_path),
             'pcode': self._extract_pcode(binary_path),
             'functions': self._extract_functions(binary_path)
         }
-        
         return ghidra_output
     
     def _extract_disassembly(self, binary_path):
-        """Extract disassembly using objdump."""
         try:
             result = subprocess.run(
                 ['objdump', '-d', str(binary_path)],
@@ -98,12 +54,6 @@ class DataPreprocessor:
             return ""
     
     def _extract_cfg(self, binary_path):
-        """
-        Extract control flow graph.
-        
-        In production, use Ghidra's CFG API.
-        Here we simulate a simple CFG structure.
-        """
         # Simulate CFG
         num_blocks = random.randint(5, 50)
         num_edges = random.randint(num_blocks, num_blocks * 2)
@@ -132,7 +82,6 @@ class DataPreprocessor:
         return cfg
     
     def _extract_pcode(self, binary_path):
-        """Extract P-Code intermediate representation."""
         # Simulate P-Code instructions
         instructions = [
             'COPY', 'LOAD', 'STORE', 'BRANCH', 'CBRANCH',
@@ -153,7 +102,6 @@ class DataPreprocessor:
         return pcode
     
     def _extract_functions(self, binary_path):
-        """Extract function boundaries."""
         # Simulate function list
         functions = [
             {
@@ -171,7 +119,6 @@ class DataPreprocessor:
         return functions
     
     def create_gnn_sample(self, sample_id, ghidra_output):
-        """Create GNN training sample."""
         cfg = ghidra_output['cfg']
         pcode = ghidra_output['pcode']
         
@@ -215,7 +162,6 @@ class DataPreprocessor:
         return gnn_sample
     
     def create_llm_sample(self, sample_id, ghidra_output, source_code, cfg_embedding):
-        """Create LLM training sample."""
         # Extract assembly for main function
         disassembly = ghidra_output['disassembly']
         
@@ -241,7 +187,6 @@ class DataPreprocessor:
         return llm_sample
     
     def create_diffusion_sample(self, sample_id, source_code, assembly_embedding, tokenizer=None):
-        """Create diffusion training sample."""
         # Tokenize source code
         # In production, use actual CodeLlama tokenizer
         if tokenizer is None:
@@ -281,7 +226,6 @@ class DataPreprocessor:
         return diffusion_sample
     
     def create_rl_sample(self, sample_id, ghidra_output):
-        """Create RL training sample (episode trajectory)."""
         # Simulate episode trajectory
         num_steps = random.randint(1, 5)
         
@@ -331,7 +275,6 @@ class DataPreprocessor:
         return rl_sample
     
     def process_sample(self, binary_path, source_path, sample_id):
-        """Process a single binary-source pair."""
         try:
             # Read source code
             with open(source_path) as f:
@@ -370,7 +313,6 @@ class DataPreprocessor:
             return False
     
     def create_splits(self, sample_ids, train_ratio=0.8, val_ratio=0.1):
-        """Create train/val/test splits."""
         random.shuffle(sample_ids)
         
         n = len(sample_ids)
@@ -397,49 +339,31 @@ class DataPreprocessor:
         return splits
     
     def save_metadata(self):
-        """Save dataset metadata."""
         with open(self.output_dir / 'metadata.json', 'w') as f:
             json.dump(self.metadata, f, indent=2)
-        
         logger.info(f"Saved metadata: {self.metadata['num_samples']} samples")
     
     def run(self):
-        """Run preprocessing pipeline."""
         logger.info("Starting data preprocessing...")
-        
-        # Find all binary-source pairs
         binary_dir = self.raw_dir / 'binaries'
         source_dir = self.raw_dir / 'ground_truth'
-        
         if not binary_dir.exists() or not source_dir.exists():
             logger.error(f"Raw data directories not found in {self.raw_dir}")
             return False
-        
-        # Match binaries with source files
         binary_files = sorted(binary_dir.glob('*.bin'))
         sample_ids = []
-        
         for binary_path in tqdm(binary_files, desc='Processing samples'):
-            # Find corresponding source file
             source_name = binary_path.stem + '.c'
             source_path = source_dir / source_name
-            
             if not source_path.exists():
                 logger.warning(f"No source file for {binary_path.name}, skipping")
                 continue
-            
             sample_id = binary_path.stem
-            
             if self.process_sample(binary_path, source_path, sample_id):
                 sample_ids.append(sample_id)
                 self.metadata['num_samples'] += 1
-        
-        # Create splits
         self.create_splits(sample_ids)
-        
-        # Save metadata
         self.save_metadata()
-        
         logger.info(f"Preprocessing complete! Processed {self.metadata['num_samples']} samples")
         return True
 
@@ -454,15 +378,9 @@ def main():
                        help='Training set ratio (default: 0.8)')
     parser.add_argument('--val-ratio', type=float, default=0.1,
                        help='Validation set ratio (default: 0.1)')
-    
     args = parser.parse_args()
-    
-    # Create preprocessor
     preprocessor = DataPreprocessor(args.raw_dir, args.output_dir)
-    
-    # Run preprocessing
     success = preprocessor.run()
-    
     if success:
         logger.info("=" * 80)
         logger.info("Preprocessing successful!")
@@ -473,7 +391,6 @@ def main():
     else:
         logger.error("Preprocessing failed")
         return 1
-
 
 if __name__ == '__main__':
     sys.exit(main())

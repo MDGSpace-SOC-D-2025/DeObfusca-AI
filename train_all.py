@@ -1,22 +1,4 @@
 #!/usr/bin/env python3
-"""
-Automated Training Pipeline for DeObfusca-AI
-
-This script trains all models in the correct order:
-1. GNN (graph encoder)
-2. LLM (fine-tune CodeLlama)
-3. Diffusion (code refinement)
-4. RL (strategy selection)
-
-Usage:
-    python3 train_all.py --data-dir ./training-data --output-dir ./models
-
-Requirements:
-    - Preprocessed dataset following DATASET_SPECIFICATION.md
-    - At least 32GB RAM
-    - GPU with 24GB+ VRAM (recommended)
-    - ~200GB disk space for checkpoints
-"""
 
 import os
 import sys
@@ -39,7 +21,6 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer
 from datasets import Dataset as HFDataset
 
-# Import model definitions
 sys.path.append('/Users/chayanaggarwal/DeObfusca-AI/ai-services')
 from gnn_service.app import GNNSanitizer
 from diffusion_service.app import DiffusionCodeGenerator
@@ -58,14 +39,10 @@ logger = logging.getLogger(__name__)
 
 
 class TrainingConfig:
-    """Central configuration for all training runs."""
-    
     def __init__(self, data_dir, output_dir):
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # GNN config
         self.gnn_config = {
             'input_dim': 128,
             'hidden_dim': 256,
@@ -76,7 +53,6 @@ class TrainingConfig:
             'lr': 1e-4,
             'weight_decay': 1e-5
         }
-        
         # LLM config
         self.llm_config = {
             'model_name': 'codellama/CodeLlama-7b-hf',
@@ -120,7 +96,6 @@ class TrainingConfig:
 # ============================================================================
 
 class GNNDataset(Dataset):
-    """Dataset for GNN training."""
     
     def __init__(self, data_dir, split='train'):
         self.data_dir = Path(data_dir) / 'preprocessed' / 'gnn'
@@ -157,7 +132,6 @@ class GNNDataset(Dataset):
 
 
 class LLMDataset(Dataset):
-    """Dataset for LLM fine-tuning."""
     
     def __init__(self, data_dir, split='train'):
         self.data_dir = Path(data_dir) / 'preprocessed' / 'llm'
@@ -180,7 +154,6 @@ class LLMDataset(Dataset):
 
 
 class DiffusionDataset(Dataset):
-    """Dataset for diffusion model training."""
     
     def __init__(self, data_dir, split='train'):
         self.data_dir = Path(data_dir) / 'preprocessed' / 'diffusion'
@@ -211,7 +184,6 @@ class DiffusionDataset(Dataset):
 
 
 class RLDataset(Dataset):
-    """Dataset for RL training."""
     
     def __init__(self, data_dir, split='train'):
         self.data_dir = Path(data_dir) / 'preprocessed' / 'rl'
@@ -241,7 +213,6 @@ class RLDataset(Dataset):
 # ============================================================================
 
 def train_gnn(config):
-    """Train Graph Neural Network."""
     logger.info("=" * 80)
     logger.info("STAGE 1: Training GNN")
     logger.info("=" * 80)
@@ -344,7 +315,6 @@ def train_gnn(config):
 
 
 def train_llm(config):
-    """Fine-tune CodeLlama for decompilation."""
     logger.info("=" * 80)
     logger.info("STAGE 2: Fine-tuning LLM")
     logger.info("=" * 80)
@@ -440,7 +410,6 @@ def train_llm(config):
 
 
 def train_diffusion(config):
-    """Train diffusion model with adversarial training."""
     logger.info("=" * 80)
     logger.info("STAGE 3: Training Diffusion Model")
     logger.info("=" * 80)
@@ -537,7 +506,6 @@ def train_diffusion(config):
 
 
 def train_rl(config):
-    """Train RL agent for strategy selection."""
     logger.info("=" * 80)
     logger.info("STAGE 4: Training RL Agent")
     logger.info("=" * 80)
@@ -588,7 +556,6 @@ def train_rl(config):
 
 
 def validate_dataset(data_dir):
-    """Validate dataset structure and format."""
     logger.info("Validating dataset...")
     
     data_dir = Path(data_dir)
@@ -636,7 +603,6 @@ def validate_dataset(data_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train all DeObfusca-AI models')
     parser.add_argument('--data-dir', type=str, required=True,
                        help='Path to training data directory')
     parser.add_argument('--output-dir', type=str, default='./models',
