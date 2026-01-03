@@ -17,14 +17,14 @@ from torch_geometric.utils import softmax as pyg_softmax
 from sklearn.metrics import f1_score
 from tqdm.auto import tqdm
 
-# ==============================================================================
-# 1. Configuration & Constants
-# ==============================================================================
+
+# 1. Configuration 
+
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 DATA_ROOT = '/kaggle/working/data/train'
 CHECKPOINT_DIR = './checkpoints'
 
-# Training Hyperparameters
+# Training parameters
 HPARAMS = {
     'embed_dim': 256,
     'op_embed_dim': 32,
@@ -51,9 +51,9 @@ def install_deps():
 install_deps()
 import py7zr 
 
-# ==============================================================================
+
 # 2. Vocabulary & Model Architecture
-# ==============================================================================
+
 class Vocab:
     """Maps x86 assembly mnemonics to integer IDs."""
     TOKENS = [
@@ -193,11 +193,11 @@ class GNN_Deobfuscator(nn.Module):
             
         return self.head(x).squeeze(-1)
 
-# ==============================================================================
-# 3. Smart Data Extraction Logic
-# ==============================================================================
+
+# 3. Data Extraction Logic
+
 def prepare_dataset(target_count):
-    
+
     if not os.path.exists(DATA_ROOT):
         os.makedirs(DATA_ROOT)
 
@@ -242,9 +242,9 @@ def prepare_dataset(target_count):
     except Exception as e:
         print(f"Extraction Error: {e}")
 
-# ==============================================================================
+
 # 4. Data Generators
-# ==============================================================================
+
 class OLLVMInjector:
     """
     Simulates Bogus Control Flow (Diamond Obfuscation).
@@ -273,7 +273,7 @@ class OLLVMInjector:
         nodes.append((self.vocab.get(random.choice(self.branches)), 3, 0))
         labels.append(1.0) 
 
-        
+       
         block_len = random.randint(2, 4)
         for _ in range(block_len):
             op_mnem = random.choice(context_buffer) if context_buffer and random.random() > 0.2 else 'NOP'
@@ -384,9 +384,9 @@ class GraphParser:
             y=torch.tensor(labels, dtype=torch.float)
         )
 
-# ==============================================================================
+
 # 5. Training Loop
-# ==============================================================================
+
 class DatasetWrapper(Dataset):
     def __init__(self, root):
         self.files = sorted(glob.glob(os.path.join(root, '**', '*.asm'), recursive=True))
@@ -401,14 +401,14 @@ class DatasetWrapper(Dataset):
         d = self.parser.parse(self.files[i])
         if d is None:
             return Data(x_mnem=torch.tensor([0]), x_op1=torch.tensor([0]), x_op2=torch.tensor([0]),
-                        edge_index=torch.tensor([[0],[0]]), edge_attr=torch.tensor([0]),
-                        pos=torch.tensor([0]), y=torch.tensor([0.]))
+                       edge_index=torch.tensor([[0],[0]]), edge_attr=torch.tensor([0]),
+                       pos=torch.tensor([0]), y=torch.tensor([0.]))
         return d
 
 def run_training():
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     
-    # 1. Smart Extraction
+    # 1. Extraction
     prepare_dataset(HPARAMS['target_files'])
     
     ds = DatasetWrapper(DATA_ROOT)
