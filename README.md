@@ -161,15 +161,4 @@ Note: Snowman (`nocode`) must be installed to run SK2 decompilation locally. If 
 3. Add a small CI job that runs the notebook demo on a fixture binary
 4. Optional: provide a small web demo (static hosting) for showcasing outputs
 
----
-
-If you want, I can now:
-
-- run the demo end-to-end on a few synthetic examples and save outputs,
-- or create a small CI job that executes the demo cell and verifies the pipeline.
-
-Tell me which you prefer and I’ll take the next step.
-
----
-
 MIT License
